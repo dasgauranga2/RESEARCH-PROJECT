@@ -11,6 +11,13 @@ from functools import partial
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+SEED = 10
+
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # function to download the preference data
 def download_and_load_file(file_path, url):
 
@@ -114,10 +121,8 @@ class PreferenceDataset(Dataset):
 def decode_tokens_from_list(token_ids, tokenizer):
     return list(tokenizer.convert_ids_to_tokens(token_ids))
 
-#tokenizer = tiktoken.get_encoding("gpt2")
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
 tokenizer.pad_token = tokenizer.eos_token
-#print(tokenizer.pad_token,tokenizer.pad_token_id)
 
 #example_dataset = PreferenceDataset(data[:4], tokenizer)
 #print(example_dataset[0])
@@ -195,8 +200,6 @@ device = torch.device("cuda")
 num_workers = 0
 batch_size = 8
 
-torch.manual_seed(123)
-
 customized_collate_fn = partial(
     custom_collate_fn,
     device=device,            # Put the data directly on a GPU if available
@@ -226,7 +229,7 @@ val_loader = DataLoader(
 
 # # sampling a batch to verify the data
 # batch = next(iter(train_loader))
-# # this should contain prompt text tokens
+# # this should only contain the prompt text tokens
 # print(decode_tokens_from_list(batch['prompt'][0],tokenizer))
 # # this should contain prompt + chosen response text + <|endoftext|> tokens (<|endoftext|> are padding tokens)
 # print(decode_tokens_from_list(batch['chosen'][0],tokenizer))
@@ -237,41 +240,18 @@ val_loader = DataLoader(
 # # this should only contain the rejected response text tokens (exlcudes the prompt tokens and padding tokens)
 # print(decode_tokens_from_list(batch['rejected'][0][batch["rejected_mask"][0]],tokenizer))
 
-# BASE_CONFIG = {
-#     "vocab_size": 50257,     # Vocabulary size
-#     "context_length": 1024,  # Context length
-#     "drop_rate": 0.0,        # Dropout rate
-#     "qkv_bias": True         # Query-key-value bias
-# }
-
-# model_configs = {
-#     "gpt2-small (124M)": {"emb_dim": 768, "n_layers": 12, "n_heads": 12},
-#     "gpt2-medium (355M)": {"emb_dim": 1024, "n_layers": 24, "n_heads": 16},
-#     "gpt2-large (774M)": {"emb_dim": 1280, "n_layers": 36, "n_heads": 20},
-#     "gpt2-xl (1558M)": {"emb_dim": 1600, "n_layers": 48, "n_heads": 25},
-# }
-
-# CHOOSE_MODEL = "gpt2-medium (355M)"
-
-# BASE_CONFIG.update(model_configs[CHOOSE_MODEL])
-
-# model = GPTModel(BASE_CONFIG)
-
-# policy_model = model
-
-# reference_model = GPTModel(BASE_CONFIG)
-# reference_model.eval()
-
-# policy_model.to(device)
-# reference_model.to(device)
-
+# load the language model to be trained
 model = AutoModelForCausalLM.from_pretrained("gpt2-medium")
 policy_model = model
+# load the reference model
 reference_model = AutoModelForCausalLM.from_pretrained("gpt2-medium")
 reference_model.eval()
+
 policy_model.to(device)
 reference_model.to(device)
 
+# function to calculate the DPO loss given log-probabilities
+# of chosen and rejected response from the language and reference model
 def compute_dpo_loss(
       model_chosen_logprobs,
       model_rejected_logprobs,
@@ -297,20 +277,22 @@ def compute_dpo_loss(
     reference_logratios = reference_chosen_logprobs - reference_rejected_logprobs
     logits = model_logratios - reference_logratios
 
-    # DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
+    # calculate the final loss
     losses = -F.logsigmoid(beta * logits)
 
-    # Optional values to track progress during training
+    # calculate the implicit reward by the model for the chosen responses
     chosen_rewards = (model_chosen_logprobs - reference_chosen_logprobs).detach()
+     # calculate the implicit reward by the model for the rejected responses
     rejected_rewards = (model_rejected_logprobs - reference_rejected_logprobs).detach()
 
-    # .mean() to average over the samples in the batch
+    # calculate the average over the samples in the batch
     return losses.mean(), chosen_rewards.mean(), rejected_rewards.mean()
 
+# function to calculate the log-probabilities
+# given the model outputs, labels and mask
+# this calculates log(Pr(y|x))
 def compute_logprobs(logits, labels, selection_mask=None):
     """
-    Compute log probabilities.
-
     Args:
       logits: Tensor of shape (batch_size, num_tokens, vocab_size)
       labels: Tensor of shape (batch_size, num_tokens)
@@ -320,15 +302,18 @@ def compute_logprobs(logits, labels, selection_mask=None):
       mean_log_prob: Mean log probability excluding padding tokens.
     """
     
-    # Labels are the inputs shifted by one
+    # labels are the inputs shifted by one
     labels = labels[:, 1:].clone()
 
-    # Truncate logits to match the labels num_tokens
+    # truncate logits to match the labels num_tokens
     logits = logits[:, :-1, :]
 
+    # calculate the log-probabilities from the model outputs
     log_probs = F.log_softmax(logits, dim=-1)
 
-    # Gather the log probabilities for the actual labels
+    # gather the log probabilities for the actual labels (next token)
+    # each now contains log-probability of token of next-time step given
+    # the current and previous time-steps
     selected_log_probs = torch.gather(
         input=log_probs,
         dim=-1,
@@ -336,29 +321,32 @@ def compute_logprobs(logits, labels, selection_mask=None):
     ).squeeze(-1)
 
     if selection_mask is not None:
+        # shift the mask by one
         mask = selection_mask[:, 1:].clone()
 
-        # Apply the mask to filter out padding tokens
+        # apply the mask to only select log-probabilities of response tokens
+        # tokens corresponding to prompt and padding are removed
         selected_log_probs = selected_log_probs * mask
 
-        # Calculate the average log probability excluding padding tokens
-        # This averages over the tokens, so the shape is (batch_size, num_tokens)
+        # finally, log-probability of the response given the prompt is calculated
+        # as the average log-probability of all the response tokens
         avg_log_prob = selected_log_probs.sum(-1) / mask.sum(-1)
 
         return avg_log_prob
 
     else:
         return selected_log_probs.mean(-1)
-    
-def compute_dpo_loss_batch(batch, policy_model, reference_model, beta):
-    """Compute the DPO loss on an input batch"""
 
-    # where policy_model(batch["chosen"]) are the logits
+# function to calculate the DPO loss of an entire batch of data
+def compute_dpo_loss_batch(batch, policy_model, reference_model, beta):
+
+    # log-probabilities of y_w given x from the language model
     policy_chosen_log_probas = compute_logprobs(
         logits=policy_model(batch["chosen"]).logits,
         labels=batch["chosen"],
         selection_mask=batch["chosen_mask"]
     )
+    # log-probabilities of y_l given x from the language model
     policy_rejected_log_probas = compute_logprobs(
         logits=policy_model(batch["rejected"]).logits,
         labels=batch["rejected"],
@@ -366,16 +354,20 @@ def compute_dpo_loss_batch(batch, policy_model, reference_model, beta):
     )
     
     with torch.no_grad():
+        # log-probabilities of y_w given x from the reference model
         ref_chosen_log_probas = compute_logprobs(
             logits=reference_model(batch["chosen"]).logits,
             labels=batch["chosen"],
             selection_mask=batch["chosen_mask"]
         )
+        # log-probabilities of y_l given x from the reference model
         ref_rejected_log_probas = compute_logprobs(
             logits=reference_model(batch["rejected"]).logits,
             labels=batch["rejected"],
             selection_mask=batch["rejected_mask"]
         )
+
+    # compute the final loss
     loss, chosen_rewards, rejected_rewards = compute_dpo_loss(
         model_chosen_logprobs=policy_chosen_log_probas,
         model_rejected_logprobs=policy_rejected_log_probas,
@@ -385,8 +377,8 @@ def compute_dpo_loss_batch(batch, policy_model, reference_model, beta):
     )
     return loss, chosen_rewards, rejected_rewards
 
+# function to evaluate the model on an entire dataset
 def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, num_batches=None):
-    """Apply compute_dpo_loss_batch to a whole data loader"""
 
     total_loss, total_chosen_rewards, total_rejected_rewards = 0., 0., 0.
     if len(data_loader) == 0:
@@ -419,8 +411,8 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
     total_rejected_rewards /= num_batches
     return total_loss, total_chosen_rewards, total_rejected_rewards
 
+# function to evaluate the model on both the training and validation sets
 def evaluate_dpo_loss_loader(policy_model, reference_model, train_loader, val_loader, beta, eval_iter):
-    """Compute the DPO loss for the training and validation dataset"""
 
     policy_model.eval()
     with torch.no_grad():
@@ -452,97 +444,58 @@ def evaluate_dpo_loss_loader(policy_model, reference_model, train_loader, val_lo
     policy_model.train()
     return res
 
-def train_model_dpo_simple(
-    policy_model, reference_model, train_loader, val_loader,
-    optimizer, num_epochs, beta,
-    eval_freq, eval_iter, start_context, tokenizer
-):
-
-    # Initialize lists to track losses and tokens seen
-    tracking = {
-        "train_losses": [],
-        "train_chosen_rewards": [],
-        "train_rejected_rewards": [],
-        "val_losses": [],
-        "val_chosen_rewards": [],
-        "val_rejected_rewards": [],
-        "tokens_seen": []
-    }
-    tokens_seen, global_step = 0, -1
-
-    # Main training loop
-    for epoch in range(num_epochs):
-        policy_model.train()  # Set model to training mode
-
-        for batch_idx, batch in enumerate(train_loader):
-
-            optimizer.zero_grad()  # Reset loss gradients from previous batch iteration
-
-            loss, chosen_rewards, rejected_rewards = compute_dpo_loss_batch(
-                batch=batch,
-                policy_model=policy_model,
-                reference_model=reference_model,
-                beta=beta
-            )
-
-            loss.backward()  # Calculate loss gradients
-            optimizer.step()  # Update model weights using loss gradients
-
-            tokens_seen += batch["chosen"].numel()
-            global_step += 1
-
-            # Optional evaluation step
-            if global_step % eval_freq == 0:
-                res = evaluate_dpo_loss_loader(
-                    policy_model=policy_model,
-                    reference_model=reference_model,
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    beta=beta,
-                    eval_iter=eval_iter
-                )
-                tracking["train_losses"].append(res["train_loss"])
-                tracking["train_chosen_rewards"].append(res["train_chosen_reward"])
-                tracking["train_rejected_rewards"].append(res["train_rejected_reward"])
-                tracking["val_losses"].append(res["val_loss"])
-                tracking["val_chosen_rewards"].append(res["val_chosen_reward"])
-                tracking["val_rejected_rewards"].append(res["val_rejected_reward"])
-                tracking["tokens_seen"].append(tokens_seen)
-                train_reward_margin = res["train_chosen_reward"] - res["train_rejected_reward"]
-                val_reward_margin = res["val_chosen_reward"] - res["val_rejected_reward"]
-
-                print(
-                    f"Ep {epoch+1} (Step {global_step:06d}): "
-                    f"Train loss {res['train_loss']:.3f}, Val loss {res['val_loss']:.3f}, "
-                    f"Train reward margins {train_reward_margin:.3f}, "
-                    f"Val reward margins {val_reward_margin:.3f}"
-                )
-
-        # Print a sample text after each epoch
-        # generate_and_print_sample(
-        #     model=model,
-        #     tokenizer=tokenizer,
-        #     device=loss.device,
-        #     start_context=start_context
-        # )
-
-    return tracking
-
-torch.manual_seed(123)
-
+# optimizer
 optimizer = torch.optim.AdamW(policy_model.parameters(), lr=5e-6, weight_decay=0.01)
 
-num_epochs = 10
-tracking = train_model_dpo_simple(
-    policy_model=policy_model,
-    reference_model=reference_model,
-    train_loader=train_loader,
-    val_loader=val_loader,
-    optimizer=optimizer,
-    num_epochs=num_epochs,
-    beta=0.1, # value between 0.1 and 0.5
-    eval_freq=5,
-    eval_iter=5,
-    start_context=format_input(val_data[2]),
-    tokenizer=tokenizer
-)
+EPOCHS = 4
+BETA = 0.1
+steps = -1
+# frequency at which the model will be evaluated
+eval_freq = 5
+# when the model is evaluated this variable
+# decides the number of batches that will be used to calculate the metrics
+eval_iter = 5
+
+for epoch in range(EPOCHS):
+    # set language model to training mode
+    policy_model.train()
+
+    for batch_idx, batch in enumerate(train_loader):
+
+        optimizer.zero_grad()
+
+        # use the batch of data to compute the loss
+        loss, chosen_rewards, rejected_rewards = compute_dpo_loss_batch(
+            batch=batch,
+            policy_model=policy_model,
+            reference_model=reference_model,
+            beta=BETA
+        )
+
+        # calculate the gradients of the loss
+        loss.backward()
+        # update the model weights 
+        optimizer.step()
+
+        steps += 1
+
+        if steps % eval_freq == 0:
+            # evaluate the model
+            res = evaluate_dpo_loss_loader(
+                policy_model=policy_model,
+                reference_model=reference_model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                beta=BETA,
+                eval_iter=eval_iter
+            )
+
+            train_reward_margin = res["train_chosen_reward"] - res["train_rejected_reward"]
+            val_reward_margin = res["val_chosen_reward"] - res["val_rejected_reward"]
+
+            print(
+                f"Ep {epoch+1} (Step {steps:03d}): "
+                f"Train loss {res['train_loss']:.3f}, Val loss {res['val_loss']:.3f}, "
+                f"Train reward margins {train_reward_margin:.3f}, "
+                f"Val reward margins {val_reward_margin:.3f}"
+            )

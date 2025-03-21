@@ -1,10 +1,6 @@
-torch >= 2.3.0
-jupyterlab >= 4.0
-# tiktoken >= 0.5.1
-matplotlib >= 3.7.1
-# tensorflow >= 2.18.0
-tqdm >= 4.66.1
-numpy >= 1.26, < 2.1
-pandas >= 2.2.1
-psutil >= 5.9.5
-transformers == 4.49.0
+torch==2.6.0
+numpy==2.0.2
+pandas==2.2.3
+psutil==7.0.0
+transformers==4.49.0
+# Nvidia CUDA Version: 12.2
