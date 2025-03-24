@@ -2,10 +2,10 @@ torch==2.6.0
 # numpy==2.0.2
 # pandas==2.2.3
 # psutil==7.0.0
-transformers==4.49.0
+transformers==4.51.0.dev0
 qwen-vl-utils
-datasets
-torchvision
-accelerate>=0.26.0
+datasets==3.4.1
+torchvision==0.21.0
+accelerate==1.5.2
 flash-attn==2.7.4.post1
 # Nvidia CUDA Version: 12.2
