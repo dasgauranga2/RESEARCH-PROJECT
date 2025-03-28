@@ -199,7 +199,7 @@ def custom_collate_fn(
 device = torch.device("cuda")
 
 num_workers = 0
-batch_size = 4
+batch_size = 6
 
 customized_collate_fn = partial(
     custom_collate_fn,
@@ -228,8 +228,26 @@ val_loader = DataLoader(
     num_workers=num_workers
 )
 
-# # sampling a batch to verify the data
+# function to filter a batch and
+# select only those samples that have a certain label value
+def filter_batch_by_label(batch, target_label=1):
+    
+    mask = batch["label"] == target_label
+    filtered_batch = {}
+
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            filtered_batch[key] = value[mask]
+        else:
+            # For lists (like list of tensors), convert to tensor first if needed
+            filtered_batch[key] = [v for i, v in enumerate(value) if mask[i]]
+
+    return filtered_batch
+
+# sampling a batch to verify the data
 # batch = next(iter(train_loader))
+# print(batch)
+# print(filter_batch_by_label(batch), 1)
 # # this should only contain the prompt text tokens
 # print(decode_tokens_from_list(batch['prompt'][0],tokenizer))
 # # this should contain prompt + chosen response text + <|endoftext|> tokens (<|endoftext|> are padding tokens)
@@ -249,8 +267,8 @@ policy_model = model
 reference_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B-Instruct", torch_dtype=torch.bfloat16, device_map="auto")
 reference_model.eval()
 
-#policy_model.to(device)
-#reference_model.to(device)
+policy_model.to(device)
+reference_model.to(device)
 
 # function to calculate the DPO loss given log-probabilities
 # of chosen and rejected response from the language and reference model
@@ -393,7 +411,17 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
         # Reduce the number of batches to match the total number of batches in the data loader
         # if num_batches exceeds the number of batches in the data loader
         num_batches = min(num_batches, len(data_loader))
+
+    filtered_batch_count = 0
+
     for i, batch in enumerate(data_loader):
+        # get only those samples from the batch that have label = 1
+        batch = filter_batch_by_label(batch, target_label=1)
+
+        # skip empty filtered batch
+        if batch["label"].numel() == 0:
+            continue
+
         if i < num_batches:
             loss, chosen_rewards, rejected_rewards = compute_dpo_loss_batch(
                 batch=batch,
@@ -404,14 +432,18 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
             total_loss += loss.item()
             total_chosen_rewards += chosen_rewards.item()
             total_rejected_rewards += rejected_rewards.item()
+            filtered_batch_count += 1
 
         else:
             break
 
+    if filtered_batch_count == 0:
+        return float("nan")
+
     # calculate average
-    total_loss /= num_batches
-    total_chosen_rewards /= num_batches
-    total_rejected_rewards /= num_batches
+    total_loss /= filtered_batch_count
+    total_chosen_rewards /= filtered_batch_count
+    total_rejected_rewards /= filtered_batch_count
     return total_loss, total_chosen_rewards, total_rejected_rewards
 
 # function to evaluate the model on both the training and validation sets
@@ -450,14 +482,14 @@ def evaluate_dpo_loss_loader(policy_model, reference_model, train_loader, val_lo
 # optimizer
 optimizer = torch.optim.AdamW(policy_model.parameters(), lr=5e-6, weight_decay=0.01)
 
-EPOCHS = 4
+EPOCHS = 6
 BETA = 0.1
 steps = -1
 # frequency at which the model will be evaluated
-eval_freq = 10
+eval_freq = 50
 # when the model is evaluated this variable
 # decides the number of batches that will be used to calculate the metrics
-eval_iter = 5
+eval_iter = 20
 
 for epoch in range(EPOCHS):
     # set the language model to training mode
