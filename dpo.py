@@ -1,6 +1,6 @@
 import json
 import os
-from urllib import request
+import math
 import pprint
 import torch
 from torch.utils.data import Dataset
@@ -25,16 +25,18 @@ torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+# criteria can be: helpfulness, honesty, instruction_following, truthfulness 
+criteria = "honesty"
+
 # data is a list of dictionaries
-with open("data/ultrafeedback.json", "r", encoding="utf-8") as file:
+with open(f"data/ultrafeedback_{criteria}.json", "r", encoding="utf-8") as file:
     data = json.load(file)
 print("Number of entries:", len(data))
 
 # each example is a dictionary containing keys
-# 'instruction' and 'inputs' which are part of the prompt and
-# 'chosen' and 'rejected' which represents the responses
 #pprint.pp(data[0])
 
+# special tokens
 START_TEXT = '<|begin_of_text|>'
 END_TEXT = '<|end_of_text|>'
 START_HEADER = '<|start_header_id|>'
@@ -42,17 +44,10 @@ END_HEADER = '<|end_header_id|>'
 PADDING_TOKEN = '<|finetune_right_pad_id|>'
 END_TURN = '<|eot_id|>'
 
-# function that combines the 'instruction' and 'inputs'
-# in a single text to form the prompt and formats it according to the 
-# model's expected input template
-# this input template is for gpt-2
+# function that fromats the instruction
+# this input template is for llama-3
 # change it for other models
 def format_input(entry):
-    # instruction_text = (
-    #     f"Below is an instruction that describes a task. "
-    #     f"Write a response that appropriately completes the request."
-    #     f"\n\n### Instruction:\n{entry['instruction']}"
-    # )
 
     input_text = START_TEXT + START_HEADER + 'user' + END_HEADER + '\n\n' + entry['instruction'] + END_TURN
 
@@ -68,6 +63,8 @@ val_data = data[train_size:]
 
 #print(len(train_data),len(val_data))
 
+max_seq_length = 1024
+
 # preference dataset class
 class PreferenceDataset(Dataset):
     def __init__(self, data, tokenizer):
@@ -78,14 +75,15 @@ class PreferenceDataset(Dataset):
 
         # iterate over the original data
         for entry in data:
-            # create the prompt text from the 'instruction' and 'input'
+            # create the prompt text from the instruction
             prompt = format_input(entry)
             # get the rejected response
             rejected_response = entry["rejected"]
             # get the chosen response
             chosen_response = entry["chosen"]
-            # get the label
-            label = entry["label"]
+            # get the labels
+            chosen_label = entry["chosen_label"]
+            rejected_label = entry["rejected_label"]
 
             # tokenize the prompt
             prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
@@ -97,19 +95,24 @@ class PreferenceDataset(Dataset):
             chosen_full_tokens = tokenizer.encode(chosen_full_text, add_special_tokens=False)
             # tokenize the prompt + rejected response text
             rejected_full_tokens = tokenizer.encode(rejected_full_text, add_special_tokens=False)
+            
+            # filter out sequences that are too long
+            if len(chosen_full_tokens) > max_seq_length or len(rejected_full_tokens) > max_seq_length:
+                continue
 
             self.encoded_texts.append({
                 "prompt": prompt_tokens, # prompt text token ids
                 "chosen": chosen_full_tokens,  # prompt + chosen response text token ids
                 "rejected": rejected_full_tokens,  # prompt + rejected response text token ids
-                "label": label
+                "chosen_label": chosen_label,
+                "rejected_label": rejected_label
             })
 
     def __getitem__(self, index):
         return self.encoded_texts[index]
 
     def __len__(self):
-        return len(self.data)
+        return len(self.encoded_texts)
     
 # function to decode the token ids to text to verify the dataset
 def decode_tokens_from_list(token_ids, tokenizer):
@@ -145,7 +148,8 @@ def custom_collate_fn(
         "rejected": [],
         "rejected_mask": [],
         "chosen_mask": [],
-        "label": []
+        "chosen_label": [],
+        "rejected_label": []
     }
 
     # Determine the longest sequence to set a common padding length
@@ -160,8 +164,10 @@ def custom_collate_fn(
         prompt = torch.tensor(item["prompt"])
         batch_data["prompt"].append(prompt)
 
-        label = torch.tensor(item["label"])
-        batch_data["label"].append(label)
+        chosen_label = torch.tensor(item["chosen_label"])
+        batch_data["chosen_label"].append(chosen_label)
+        rejected_label = torch.tensor(item["rejected_label"])
+        batch_data["rejected_label"].append(rejected_label)
 
         for key in ["chosen", "rejected"]:
             # Adjust padding according to the common maximum length
@@ -192,7 +198,8 @@ def custom_collate_fn(
         # Move to the specified device
         batch_data[key] = tensor_stack.to(device)
 
-    batch_data["label"] = torch.tensor(batch_data["label"])
+    batch_data["chosen_label"] = torch.tensor(batch_data["chosen_label"])
+    batch_data["rejected_label"] = torch.tensor(batch_data["rejected_label"])
 
     return batch_data
 
@@ -205,7 +212,7 @@ customized_collate_fn = partial(
     custom_collate_fn,
     device=device,            # Put the data directly on a GPU if available
     mask_prompt_tokens=True,  # This is optional
-    allowed_max_length=1024   # The supported context length of the model
+    allowed_max_length=max_seq_length   # The supported context length of the model
 )
 
 train_dataset = PreferenceDataset(train_data, tokenizer)
@@ -229,10 +236,10 @@ val_loader = DataLoader(
 )
 
 # function to filter a batch and
-# select only those samples that have a certain label value
-def filter_batch_by_label(batch, target_label=1):
+# select only those samples that are tied preferences
+def filter_batch(batch):
     
-    mask = batch["label"] == target_label
+    mask = batch["chosen_label"] == batch["rejected_label"]
     filtered_batch = {}
 
     for key, value in batch.items():
@@ -403,7 +410,7 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
 
     total_loss, total_chosen_rewards, total_rejected_rewards = 0., 0., 0.
     if len(data_loader) == 0:
-        return float("nan")
+        raise ValueError("DATALOADER IS EMPTY")
 
     elif num_batches is None:
         num_batches = len(data_loader)
@@ -412,23 +419,29 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
         # if num_batches exceeds the number of batches in the data loader
         num_batches = min(num_batches, len(data_loader))
 
+    # no. of batches filtered batches seen
     filtered_batch_count = 0
 
-    for i, batch in enumerate(data_loader):
-        # get only those samples from the batch that have label = 1
-        batch = filter_batch_by_label(batch, target_label=1)
+    for batch in data_loader:
+        # get only those samples from the batch that have tied preferences
+        batch = filter_batch(batch)
 
         # skip empty filtered batch
-        if batch["label"].numel() == 0:
+        if batch["chosen_label"].numel() == 0:
             continue
 
-        if i < num_batches:
+        if filtered_batch_count < num_batches:
             loss, chosen_rewards, rejected_rewards = compute_dpo_loss_batch(
                 batch=batch,
                 policy_model=policy_model,
                 reference_model=reference_model,
                 beta=beta
             )
+            # print(loss.item())
+            # if math.isnan(loss.item()):
+            #     print(batch)
+            #     print(batch['chosen_mask'].sum(dim=1))
+            #     print(batch['rejected_mask'].sum(dim=1))
             total_loss += loss.item()
             total_chosen_rewards += chosen_rewards.item()
             total_rejected_rewards += rejected_rewards.item()
@@ -438,7 +451,7 @@ def compute_dpo_loss_loader(data_loader, policy_model, reference_model, beta, nu
             break
 
     if filtered_batch_count == 0:
-        return float("nan")
+        raise ValueError("DATALOADER HAS NO BATCH THAT HAS TIED PREFERENCES")
 
     # calculate average
     total_loss /= filtered_batch_count
@@ -491,6 +504,14 @@ eval_freq = 50
 # decides the number of batches that will be used to calculate the metrics
 eval_iter = 20
 
+# ensure directory to store results exists
+os.makedirs("outputs", exist_ok=True)
+# file name to store the results
+file_name = f"outputs/dpo_{criteria}.txt"
+# open the file
+with open(file_name, "w") as file:
+    file.write(f"DPO results with criteria: {criteria}\n\n")
+
 for epoch in range(EPOCHS):
     # set the language model to training mode
     policy_model.train()
@@ -534,3 +555,11 @@ for epoch in range(EPOCHS):
                 f"Train reward margins {train_reward_margin:.3f}, "
                 f"Val reward margins {val_reward_margin:.3f}"
             )
+
+            with open(file_name, "a") as file:
+                file.write(
+                    f"Ep {epoch+1} (Step {steps:03d}): "
+                    f"Train loss {res['train_loss']:.3f}, Val loss {res['val_loss']:.3f}, "
+                    f"Train reward margins {train_reward_margin:.3f}, "
+                    f"Val reward margins {val_reward_margin:.3f}\n"
+                )
