@@ -16,6 +16,8 @@ from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
 from data_collator_bunny_phi import mDPODataCollatorBunny
 from mdpo_trainer import mDPOTrainer
 
+# run the script using the following command
+# CUDA_VISIBLE_DEVICES=0 python bunny/run_mdpo_bunny.py
 
 @dataclass
 class ModelArguments:
@@ -248,9 +250,11 @@ def train(config_dict):
             model.enable_input_require_grads()
 
     # Load data
-    print(model_args.dataset_path)
+    #print(model_args.dataset_path)
+    # preference json data must be stored as mDPO/data/vlfeedback_llava_10k.json
+    # image data must be stored as mDPO/data/merged_images/
     train_dataset = datasets.load_dataset('json', data_files=model_args.dataset_path, split="train")
-
+    
     # Start trainner
     trainer = mDPOTrainer(
         model,
