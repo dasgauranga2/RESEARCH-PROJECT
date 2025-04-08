@@ -1,4 +1,5 @@
-# use conda to install python 3.10
+# conda create --name mdpo python=3.10
+# conda activate mdpo
 torch==2.0.1
 torchvision==0.15.2
 numpy==1.26.2
