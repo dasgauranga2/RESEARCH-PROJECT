@@ -41,6 +41,8 @@ if use_lora:
 
     model = model.merge_and_unload()
 
+    print("LoRA adapter weights applied")
+
 # set model to evaluation mode
 model.eval()
 
@@ -70,7 +72,7 @@ with torch.no_grad():
         output_ids = model.generate(
             input_ids,
             images=image_tensor,
-            max_new_tokens=100,
+            max_new_tokens=150,
             use_cache=True,
             repetition_penalty=1.0 # increase this to avoid chattering
         )[0]
