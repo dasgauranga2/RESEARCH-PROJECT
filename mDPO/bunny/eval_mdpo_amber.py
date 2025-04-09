@@ -1,0 +1,88 @@
+import torch
+import transformers
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from PIL import Image
+import warnings
+from peft import PeftModel
+import json
+from tqdm import tqdm
+
+# disable some warnings
+transformers.logging.set_verbosity_error()
+transformers.logging.disable_progress_bar()
+# warnings.filterwarnings('ignore')
+
+# open the file with queries and image paths
+with open('./AMBER/data/query/query_generative.json') as file:
+    queries = json.load(file)
+
+# set device
+device = 'cuda'
+torch.set_default_device(device)
+
+# load the base model
+model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-v1_0-3B',
+    torch_dtype=torch.float16, # float32 for cpu
+    device_map='auto',
+    trust_remote_code=True)
+
+# path of saved checkpoint
+checkpoint_path = './checkpoint/mdpo_bunny'
+# determine if LoRA adapter weights should be used
+use_lora = True
+
+if use_lora:
+    # apply LoRA adapter weights
+    model = PeftModel.from_pretrained(
+        model,
+        checkpoint_path
+    )
+
+    model = model.merge_and_unload()
+
+# set model to evaluation mode
+model.eval()
+
+# load the model tokenizer
+tokenizer = AutoTokenizer.from_pretrained(
+    checkpoint_path,
+    trust_remote_code=True)
+
+# list to store the results
+result = []
+
+with torch.no_grad():
+    for data in tqdm(queries, desc="Generating responses on AMBER"):
+        query_id = data['id']
+
+        # prompt text
+        prompt = data['query']
+        text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{prompt} ASSISTANT:"
+        text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
+        input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
+
+        # load the image
+        image = Image.open('./AMBER/data/image/' + data['image']).convert('RGB')
+        image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
+
+        # generate the model outputs
+        output_ids = model.generate(
+            input_ids,
+            images=image_tensor,
+            max_new_tokens=100,
+            use_cache=True,
+            repetition_penalty=1.0 # increase this to avoid chattering
+        )[0]
+
+        # get the generated text
+        response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip()
+
+        result.append({
+            "id": query_id,
+            "response": response
+        })
+
+# save the result
+with open("./AMBER/mdpo_results.json", "w") as file:
+    json.dump(result, file, indent=4)
