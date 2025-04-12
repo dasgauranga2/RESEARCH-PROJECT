@@ -147,7 +147,7 @@ def prepare_inputs(
 
 # prompt text
 prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Describe the image?\n<image> ASSISTANT:"
-response = "The image shows a mouse which appears to be connected to a computer via a USB cable. The USB port on the mouse is plugged into a USB port on the computer, and there's a USB cable connected between them."
+response = "The image shows a mouse with a cable connected to it."
 # load the image
 image_path = './data/test2.png'
 
@@ -181,19 +181,38 @@ with torch.no_grad():
     logits_imageless = outputs_imageless.logits.squeeze()
     probs_imageless = torch.softmax(logits_imageless, dim=-1)
 
+    # Step 1: Get response length (already done)
     response_length = (torch.tensor(data["conditioned_labels"]) != -100).sum().item()
     response_imageless_length = (torch.tensor(data["unconditioned_labels"]) != -100).sum().item()
 
-    assert response_length==response_imageless_length
+    assert response_length == response_imageless_length
 
-    probs_response = probs[-response_length:]  # conditioned response probs
-    probs_imageless_response = probs_imageless[-response_length:]  # unconditioned response probs
+    # Step 2: Slice last `response_length` probabilities
+    probs_response = probs[-(response_length+1):]  # conditioned
+    probs_imageless_response = probs_imageless[-(response_length+1):]  # unconditioned
 
+    # Step 3: Get response token IDs
+    response_token_ids = [token_id for token_id in data["conditioned_labels"] if token_id != -100]
+
+    # Step 4: Decode each token
+    response_tokens = [tokenizer.decode([token_id]) for token_id in response_token_ids]
+
+    # Step 5: Compute Hellinger distances (shifted correctly)
     hellinger_distance = []
 
-    for probs, probs_imageless in zip(probs_response, probs_imageless_response):
-         # compute the hellinger distance between the probability distributions
-         H = torch.sqrt(torch.sum(torch.pow(torch.sqrt(probs) - torch.sqrt(probs_imageless), 2)))/math.sqrt(2)
-         hellinger_distance.append(H)
+    sqrt2 = math.sqrt(2)  # precompute sqrt(2)
+
+    # we skip the first probs because it predicts the 1st token, and we cannot align it cleanly
+    for i in range(len(probs_response) - 1):
+        probs_t = probs_response[i]
+        probs_imageless_t = probs_imageless_response[i]
+
+        # Hellinger distance
+        H = torch.sqrt(torch.sum((torch.sqrt(probs_t) - torch.sqrt(probs_imageless_t))**2)) / sqrt2
+
+        # Correct token matching: Hellinger at step i → token at i+1
+        token = response_tokens[i]  # shift by +1
+
+        hellinger_distance.append((token, H.item()))
     
     print(hellinger_distance)
