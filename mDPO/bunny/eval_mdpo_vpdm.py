@@ -6,6 +6,7 @@ import warnings
 from peft import PeftModel
 from bunny_utils.util.mm_utils import tokenizer_image_token
 import math
+import json
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -137,7 +138,7 @@ def prepare_inputs(
         batch["unconditioned_attention_mask"] = unconditioned_tokens["attention_mask"]
         batch["unconditioned_labels"] = unconditioned_tokens["labels"]
 
-        image = Image.open(img_path)
+        image = Image.open(img_path).convert('RGB')
         # process the image into a tensor
         image_tensor = model.process_images([image], model.config).to(dtype=model.dtype)
         batch["image"] = image_tensor
@@ -155,82 +156,111 @@ def prepare_inputs(
 
         return batch
 
-# prompt text with <image> token
-prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: What color is this animal?\n<image> ASSISTANT:"
-# response text
-response = "This image captures a serene outdoor scene of three people walking through a lush, grassy field. The field is expansive, with a clear blue sky overhead and a line of trees in the distance. The individuals appear to be enjoying a leisurely stroll, with one person leading the way. The person in the lead is wearing a blue shirt and shorts, while the other two are dressed in more casual attire. The person in the back is wearing a gray shirt and shorts, and the person in the front is wearing a white shirt and shorts. The grass is tall and green, and there are some weeds and flowers scattered throughout the field. The overall atmosphere is peaceful and inviting, with the natural beauty of the surroundings enhancing the sense of tranquility."
-# image path
-image_path = './AMBER/data/image/AMBER_1.jpg'
+# open the file with queries and image paths
+with open('./AMBER/data/query/query_generative.json') as file:
+    queries = json.load(file)
 
-# get the inputs for the model
-data = prepare_inputs(prompt, response, image_path, tokenizer, model)
+# open the file with responses
+with open("./AMBER/mdpo_results.json", "r") as file:
+    responses = json.load(file)
 
-with torch.no_grad():
-    # feedforward the conditioned inputs with image
-    outputs = model(
-        input_ids=torch.tensor(data["conditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["conditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
-        images=data["image"].unsqueeze(0),  # model expects batch size
-        labels=None,
-        use_cache=False,
-        output_attentions=False,
-        output_hidden_states=False,
-        return_dict=True
-    )
+assert len(queries)==len(responses)
 
-    # get the conditioned probabilities
-    logits = outputs.logits.squeeze()
-    probs = torch.softmax(logits, dim=-1)
+# total response tokens seen so far
+total_count = 0
+# number of surprise tokens seen so far
+surprise_count = 0
+# sum of hellinger distance values
+hellinger_sum = 0
 
-    # feedforward the unconditioned inputs without the image
-    outputs_imageless = model(
-        input_ids=torch.tensor(data["unconditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["unconditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
-        labels=None,
-        use_cache=False,
-        output_attentions=False,
-        output_hidden_states=False,
-        return_dict=True
-    )
+for i, (query_data, response_data) in enumerate(zip(queries, responses)):
 
-    # get the unconditioned probabilities
-    logits_imageless = outputs_imageless.logits.squeeze()
-    probs_imageless = torch.softmax(logits_imageless, dim=-1)
+    assert query_data['id']==response_data['id']
 
-    # get the response length
-    response_length = (torch.tensor(data["conditioned_labels"]) != -100).sum().item()
-    response_imageless_length = (torch.tensor(data["unconditioned_labels"]) != -100).sum().item()
-    assert response_length == response_imageless_length
+    # prompt text with <image> token
+    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {query_data['query']}\n<image> ASSISTANT:"
+    # response text
+    response = response_data['response']
+    # image path
+    image_path = './AMBER/data/image/' + query_data['image']
 
-    # slice only the probabilities corresponding to response tokens
-    # since, when calculating Prompt Dependency Measure using Hellinger distance
-    # we only calculate probabilities of response tokens
-    probs_response = probs[-(response_length+1):]  # conditioned
-    probs_imageless_response = probs_imageless[-(response_length+1):]  # unconditioned
-
-    # get the response token ids
-    response_token_ids = [token_id for token_id in data["conditioned_labels"] if token_id != -100]
-
-    # decode each token
-    response_tokens = [tokenizer.decode([token_id]) for token_id in response_token_ids]
+    # get the inputs for the model
+    data = prepare_inputs(prompt, response, image_path, tokenizer, model)
 
     # list to compute Hellinger distance for each token
     hellinger_distance = []
 
-    # pre-compute square root of 2
-    sqrt2 = math.sqrt(2) 
+    with torch.no_grad():
+        # feedforward the conditioned inputs with image
+        outputs = model(
+            input_ids=torch.tensor(data["conditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
+            attention_mask=torch.tensor(data["conditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
+            images=data["image"].unsqueeze(0),  # model expects batch size
+            labels=None,
+            use_cache=False,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True
+        )
 
-    for i in range(len(probs_response) - 1):
-        probs_t = probs_response[i]
-        probs_imageless_t = probs_imageless_response[i]
+        # get the conditioned probabilities
+        logits = outputs.logits.squeeze()
+        probs = torch.softmax(logits, dim=-1)
 
-        # Hellinger distance
-        H = torch.sqrt(torch.sum((torch.sqrt(probs_t) - torch.sqrt(probs_imageless_t))**2)) / sqrt2
+        # feedforward the unconditioned inputs without the image
+        outputs_imageless = model(
+            input_ids=torch.tensor(data["unconditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
+            attention_mask=torch.tensor(data["unconditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
+            labels=None,
+            use_cache=False,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True
+        )
 
-        # the response token at time-step t calculates probabilities of token of next time-step t+1
-        # remember the probabilities obtained above are shifted by one
-        token = response_tokens[i]
+        # get the unconditioned probabilities
+        logits_imageless = outputs_imageless.logits.squeeze()
+        probs_imageless = torch.softmax(logits_imageless, dim=-1)
 
-        hellinger_distance.append((token, H.item()))
-    
-    print(hellinger_distance)
+        # get the response length
+        response_length = (torch.tensor(data["conditioned_labels"]) != -100).sum().item()
+        response_imageless_length = (torch.tensor(data["unconditioned_labels"]) != -100).sum().item()
+        assert response_length == response_imageless_length
+
+        # slice only the probabilities corresponding to response tokens
+        # since, when calculating Prompt Dependency Measure using Hellinger distance
+        # we only calculate probabilities of response tokens
+        probs_response = probs[-(response_length+1):]  # conditioned
+        probs_imageless_response = probs_imageless[-(response_length+1):]  # unconditioned
+
+        # get the response token ids
+        response_token_ids = [token_id for token_id in data["conditioned_labels"] if token_id != -100]
+
+        # decode each token
+        response_tokens = [tokenizer.decode([token_id]) for token_id in response_token_ids]
+
+        # pre-compute square root of 2
+        sqrt2 = math.sqrt(2) 
+
+        for j in range(response_length):
+            # conditioned probability
+            probs_t = probs_response[j]
+            # unconditioned probability
+            probs_imageless_t = probs_imageless_response[j]
+
+            # calculate the Hellinger distance
+            H = torch.sqrt(torch.sum((torch.sqrt(probs_t) - torch.sqrt(probs_imageless_t))**2)) / sqrt2
+
+            # get the corresponding token
+            token = response_tokens[j]
+
+            hellinger_distance.append((token, H.item()))
+
+            hellinger_sum += H
+            if H > 0.5:
+                surprise_count += 1
+        
+        total_count += response_length
+
+    if i > 0 and i%100 == 0:
+         print(f"Surprise Tokens: {(surprise_count/total_count)*100:.2f}%\tAverage Hellinger Distance: {hellinger_sum/total_count:.2f}")
