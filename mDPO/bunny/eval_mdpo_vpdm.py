@@ -137,23 +137,36 @@ def prepare_inputs(
         batch["unconditioned_attention_mask"] = unconditioned_tokens["attention_mask"]
         batch["unconditioned_labels"] = unconditioned_tokens["labels"]
 
-        #print('./data/merged_images/' + img_path)
         image = Image.open(img_path)
         # process the image into a tensor
         image_tensor = model.process_images([image], model.config).to(dtype=model.dtype)
         batch["image"] = image_tensor
 
+        # the final result will be of this format
+        #     batch = {
+        #     "conditioned_input_ids" # input token IDs for the prompt + image + response
+        #     "conditioned_attention_mask" # attention mask
+        #     "conditioned_labels" # labels for the conditioned_input_ids with prompt tokens masked
+        #     "unconditioned_input_ids" # input token IDs for the prompt + response
+        #     "unconditioned_attention_mask" # attention mask
+        #     "unconditioned_labels" # labels for the unconditioned_input_ids with prompt tokens masked
+        #     "image": <tensor representation of the image>  # image tensor
+        # }
+
         return batch
 
-# prompt text
-prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: Describe the image?\n<image> ASSISTANT:"
-response = "The image shows a mouse with a cable connected to it."
-# load the image
-image_path = './data/test2.png'
+# prompt text with <image> token
+prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: What color is this animal?\n<image> ASSISTANT:"
+# response text
+response = "This image captures a serene outdoor scene of three people walking through a lush, grassy field. The field is expansive, with a clear blue sky overhead and a line of trees in the distance. The individuals appear to be enjoying a leisurely stroll, with one person leading the way. The person in the lead is wearing a blue shirt and shorts, while the other two are dressed in more casual attire. The person in the back is wearing a gray shirt and shorts, and the person in the front is wearing a white shirt and shorts. The grass is tall and green, and there are some weeds and flowers scattered throughout the field. The overall atmosphere is peaceful and inviting, with the natural beauty of the surroundings enhancing the sense of tranquility."
+# image path
+image_path = './AMBER/data/image/AMBER_1.jpg'
 
+# get the inputs for the model
 data = prepare_inputs(prompt, response, image_path, tokenizer, model)
 
 with torch.no_grad():
+    # feedforward the conditioned inputs with image
     outputs = model(
         input_ids=torch.tensor(data["conditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
         attention_mask=torch.tensor(data["conditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
@@ -165,9 +178,11 @@ with torch.no_grad():
         return_dict=True
     )
 
+    # get the conditioned probabilities
     logits = outputs.logits.squeeze()
     probs = torch.softmax(logits, dim=-1)
 
+    # feedforward the unconditioned inputs without the image
     outputs_imageless = model(
         input_ids=torch.tensor(data["unconditioned_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
         attention_mask=torch.tensor(data["unconditioned_attention_mask"], dtype=torch.long).unsqueeze(0),
@@ -178,31 +193,33 @@ with torch.no_grad():
         return_dict=True
     )
 
+    # get the unconditioned probabilities
     logits_imageless = outputs_imageless.logits.squeeze()
     probs_imageless = torch.softmax(logits_imageless, dim=-1)
 
-    # Step 1: Get response length (already done)
+    # get the response length
     response_length = (torch.tensor(data["conditioned_labels"]) != -100).sum().item()
     response_imageless_length = (torch.tensor(data["unconditioned_labels"]) != -100).sum().item()
-
     assert response_length == response_imageless_length
 
-    # Step 2: Slice last `response_length` probabilities
+    # slice only the probabilities corresponding to response tokens
+    # since, when calculating Prompt Dependency Measure using Hellinger distance
+    # we only calculate probabilities of response tokens
     probs_response = probs[-(response_length+1):]  # conditioned
     probs_imageless_response = probs_imageless[-(response_length+1):]  # unconditioned
 
-    # Step 3: Get response token IDs
+    # get the response token ids
     response_token_ids = [token_id for token_id in data["conditioned_labels"] if token_id != -100]
 
-    # Step 4: Decode each token
+    # decode each token
     response_tokens = [tokenizer.decode([token_id]) for token_id in response_token_ids]
 
-    # Step 5: Compute Hellinger distances (shifted correctly)
+    # list to compute Hellinger distance for each token
     hellinger_distance = []
 
-    sqrt2 = math.sqrt(2)  # precompute sqrt(2)
+    # pre-compute square root of 2
+    sqrt2 = math.sqrt(2) 
 
-    # we skip the first probs because it predicts the 1st token, and we cannot align it cleanly
     for i in range(len(probs_response) - 1):
         probs_t = probs_response[i]
         probs_imageless_t = probs_imageless_response[i]
@@ -210,8 +227,9 @@ with torch.no_grad():
         # Hellinger distance
         H = torch.sqrt(torch.sum((torch.sqrt(probs_t) - torch.sqrt(probs_imageless_t))**2)) / sqrt2
 
-        # Correct token matching: Hellinger at step i → token at i+1
-        token = response_tokens[i]  # shift by +1
+        # the response token at time-step t calculates probabilities of token of next time-step t+1
+        # remember the probabilities obtained above are shifted by one
+        token = response_tokens[i]
 
         hellinger_distance.append((token, H.item()))
     
