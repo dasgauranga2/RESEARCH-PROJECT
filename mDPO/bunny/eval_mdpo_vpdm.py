@@ -172,6 +172,8 @@ total_count = 0
 surprise_count = 0
 # sum of hellinger distance values
 hellinger_sum = 0
+# keep track of surprise tokens average
+surprise_tokens = {}
 
 for i, (query_data, response_data) in enumerate(zip(queries, responses)):
 
@@ -259,8 +261,26 @@ for i, (query_data, response_data) in enumerate(zip(queries, responses)):
             hellinger_sum += H
             if H > 0.5:
                 surprise_count += 1
+                if token in surprise_tokens:
+                    surprise_tokens[token].append(H)
+                else:
+                    surprise_tokens[token] = [H]
         
         total_count += response_length
 
     if i > 0 and i%100 == 0:
          print(f"Surprise Tokens: {(surprise_count/total_count)*100:.2f}%\tAverage Hellinger Distance: {hellinger_sum/total_count:.2f}")
+
+# for tok, hd in surprise_tokens.items():
+#     print(f"Token: {tok}\tAverage Hellinger Distance: {sum(hd)/len(hd):.2f}")
+
+# save the results in a text file
+with open("eval_mdpo_vdpm.txt", "w") as file:
+    file.write(f"Percentage of Surprise Tokens: {(surprise_count/total_count)*100:.2f}\n")
+    file.write(f"Average Hellinger Distance: {hellinger_sum/total_count:.2f}\n")
+
+    # Save token-wise surprise Hellinger values
+    file.write("Surprise Tokens Hellinger Distances:\n")
+    for tok, hd in surprise_tokens.items():
+        avg_hd = sum(hd) / len(hd)
+        file.write(f"Token: {repr(tok)}\tAverage Hellinger Distance: {avg_hd:.2f}\n")
