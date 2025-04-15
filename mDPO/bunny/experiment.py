@@ -183,28 +183,56 @@ with torch.no_grad():
     # get the chosen logits
     chosen_logits = chosen_outputs.logits.squeeze()
 
-    # decode the chosen sequence tokens
-    chosen_tokens = [tokenizer.decode([token_id]) for token_id in data["chosen_input_ids"]]
+    # get the response token ids
+    chosen_response_token_ids = [token_id if token_id >= 0 else tokenizer.unk_token_id for token_id in data["chosen_input_ids"]]
 
-    # the chosen logits and chosen_tokens lengths won't match
-    # since the chosen logits have extra image tokens inserted between them
-    # but, both sequences end with response tokens so reverse them both
-    chosen_tokens.reverse()
-    chosen_logits = chosen_logits[:-1]
+    # decode each token
+    chosen_response_tokens = [tokenizer.decode([token_id]) for token_id in chosen_response_token_ids]
+    #print(chosen_response_tokens)
     
-    print(chosen_logits.shape, len(data["chosen_input_ids"]))
+    # both the chosen response tokens and chosen logits end with response tokens
+    # so start counting from reverse
+    for i in range(1,len(chosen_response_tokens)):
+        # get the token
+        token = chosen_response_tokens[-i].strip().lower()
 
-    # # feedforward the rejected inputs
-    # rejected_outputs = model(
-    #     input_ids=torch.tensor(data["rejected_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-    #     attention_mask=torch.tensor(data["rejected_attention_mask"], dtype=torch.long).unsqueeze(0),
-    #     images=data["image"].unsqueeze(0),  # model expects batch size
-    #     labels=None,
-    #     use_cache=False,
-    #     output_attentions=False,
-    #     output_hidden_states=False,
-    #     return_dict=True
-    # )
+        if token == 'cat':
+            # get the logit corresponding to 'cat'
+            chosen_logit = chosen_logits[-(i+1)][chosen_response_token_ids[-i]]
+            break
 
-    # # get the rejected logits
-    # rejected_logits = rejected_outputs.logits.squeeze()
+    # feedforward the rejected inputs
+    rejected_outputs = model(
+        input_ids=torch.tensor(data["rejected_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
+        attention_mask=torch.tensor(data["rejected_attention_mask"], dtype=torch.long).unsqueeze(0),
+        images=data["image"].unsqueeze(0),  # model expects batch size
+        labels=None,
+        use_cache=False,
+        output_attentions=False,
+        output_hidden_states=False,
+        return_dict=True
+    )
+
+    # get the rejected logits
+    rejected_logits = rejected_outputs.logits.squeeze()
+
+    # get the response token ids
+    rejected_response_token_ids = [token_id if token_id >= 0 else tokenizer.unk_token_id for token_id in data["rejected_input_ids"]]
+
+    # decode each token
+    rejected_response_tokens = [tokenizer.decode([token_id]) for token_id in rejected_response_token_ids]
+    #print(chosen_response_tokens)
+    
+    # both the chosen response tokens and chosen logits end with response tokens
+    # so start counting from reverse
+    for i in range(1,len(rejected_response_tokens)):
+        # get the token
+        token = rejected_response_tokens[-i].strip().lower()
+
+        if token == 'cat':
+            # get the logit corresponding to 'cat'
+            rejected_logit = rejected_logits[-(i+1)][rejected_response_token_ids[-i]]
+            break
+    
+    print(f"Chosen logit of cat: {chosen_logit}")
+    print(f"Rejected logit of cat: {rejected_logit}")
