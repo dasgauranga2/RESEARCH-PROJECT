@@ -121,7 +121,7 @@ class mDPODataCollatorBunny(DPODataCollatorWithPadding):
         #     "rejected_labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 3446, 3430, 1012, 102, 1],  # labels for the prompt + rejected response with prompt part masked
         #     "prompt_input_ids": [101, 2023, 2003, 2019, 2742, 3430, 2007, 2019, 999, 1],  # input token IDs for the prompt with image tokens
         #     "prompt_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask for the prompt
-        #     "image": <tensor representation of the image>  # image tensor
+        #     "image": <tensor representation of the image>  # image tensor of shape (1, channels, height, width)
         # }
 
         return batch
