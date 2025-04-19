@@ -16,35 +16,44 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
+# PROBLEM: DPA produces negative text which may not have logical sense
+# EXPERIMENT: Take an image, a query and a partial response and compute the probabilities of the next response token
+#             for both the reference and DPA model
+
 # load the base model
-model = AutoModelForCausalLM.from_pretrained(
+reference_model = AutoModelForCausalLM.from_pretrained(
     'BAAI/Bunny-v1_0-3B',
     torch_dtype=torch.float16, # float32 for cpu
     device_map='auto',
     trust_remote_code=True)
 
 # load the base model
-model = AutoModelForCausalLM.from_pretrained(
+dpa_model = AutoModelForCausalLM.from_pretrained(
     'BAAI/Bunny-v1_0-3B',
     torch_dtype=torch.float16, # float32 for cpu
     device_map='auto',
     trust_remote_code=True)
 
 # path of saved checkpoint
-checkpoint_path = './checkpoint/mdpo_bunny'
-# # determine if LoRA adapter weights should be used
-# use_lora = True
+checkpoint_path = './checkpoint/dpa_bunny'
+# determine if LoRA adapter weights should be used
+use_lora = True
 
-# if use_lora:
-#     model = PeftModel.from_pretrained(
-#         model,
-#         checkpoint_path
-#     )
+if use_lora:
+    dpa_model = PeftModel.from_pretrained(
+        dpa_model,
+        checkpoint_path
+    )
 
-#     model = model.merge_and_unload()
+    dpa_model = dpa_model.merge_and_unload()
+
+# load the vision towers
+reference_model.get_vision_tower().load_model()
+dpa_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
-model.eval()
+reference_model.eval()
+dpa_model.eval()
 
 # load the model tokenizer
 tokenizer = AutoTokenizer.from_pretrained(
@@ -162,19 +171,26 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
 
     return batch
 
+# query text
+query = "Write a summary of the picture."
 # prompt text with <image> token
-prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nDescribe the image. ASSISTANT:"
-# chosen response text
-response = "The image features an orange"
+prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# partial response text
+response = "The man is in a hotel room. There is a backpack and suitcase on the"
 # image path
-image_path = './data/test3.png'
+image_path = './data/vg/VG_100K/2338846.jpg'
 
 # get the inputs for the model
-data = prepare_inputs(prompt, response, image_path, tokenizer, model)
+data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
 #print(data)
 
 # function to get the top token probabilities
 def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
+    # list to store probabilities of each token
+    probabilities = []
+
+    # result string
+    result = ""
 
     with torch.no_grad():
         # feedforward the inputs
@@ -198,9 +214,6 @@ def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
         # get probabilities
         probs = torch.softmax(last_token_logits, dim=-1)
 
-        # list to store probabilities of each token
-        probabilities = []
-
         # get probabilities of each token
         for i in range(len(probs)):
             probabilities.append((tokenizer.decode([i], skip_special_tokens=True), probs[i].item()))
@@ -210,7 +223,13 @@ def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
 
         # print the top probabilities
         for tok, prob in probabilities[:top]:
-            print(f"{tok} {prob:.4f}")
+            result = result + f"{tok:<10}" + f"{prob:6.4f}" + "\n"
+            #print(f"{tok} {prob:.4f}")
+    
+    return result
 
 #top_token_probs(model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer)
-top_token_probs(model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer, 10)
+print("Reference model Probs")
+print(top_token_probs(reference_model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer))
+print("DPA model Probs")
+print(top_token_probs(dpa_model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer))
