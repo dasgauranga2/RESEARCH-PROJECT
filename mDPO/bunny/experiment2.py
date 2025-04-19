@@ -100,49 +100,17 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
     ]
     response_tokens["attention_mask"] = new_attention_mask_c
 
-    # # add EOS token to end of responses
-    # response_tokens["input_ids"].append(tokenizer.eos_token_id)
-    # response_tokens["attention_mask"].append(1)
-
-    # rejected_tokens["input_ids"].append(tokenizer.eos_token_id)
-    # rejected_tokens["attention_mask"].append(1)
-
-    # # determine the longer of the chosen and rejected response
-    # longer_response_length = max(len(chosen_tokens["input_ids"]), len(rejected_tokens["input_ids"]))
-
-    # # if combined sequence is too long, truncate the prompt
-    # if len(prompt_tokens["input_ids"]) + longer_response_length > self.max_length:
-    #     if self.truncation_mode == "keep_start":
-    #         prompt_tokens = {k: v[: self.max_prompt_length] for k, v in prompt_tokens.items()}
-    #     elif self.truncation_mode == "keep_end":
-    #         prompt_tokens = {k: v[-self.max_prompt_length :] for k, v in prompt_tokens.items()}
-    #     else:
-    #         raise ValueError(f"Unknown truncation mode: {self.truncation_mode}")
-
-    # # if that's still too long, truncate the response
-    # if len(prompt_tokens["input_ids"]) + longer_response_length > self.max_length:
-    #     chosen_tokens = {k: v[: self.max_length - self.max_prompt_length] for k, v in chosen_tokens.items()}
-    #     rejected_tokens = {
-    #         k: v[: self.max_length - self.max_prompt_length] for k, v in rejected_tokens.items()
-    #     }
-
     # concatenate the prompt and response tokens
     response_sequence_tokens = {k: prompt_tokens[k] + response_tokens[k] for k in response_tokens}
-    #rejected_sequence_tokens = {k: prompt_tokens[k] + rejected_tokens[k] for k in rejected_tokens}
     # lables are created from the above tokens such that
     # tokens corresponding to prompt tokens are masked 
     response_sequence_tokens["labels"] = response_sequence_tokens["input_ids"][:]
     response_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [-100] * len(
         prompt_tokens["input_ids"]
     )
-    # rejected_sequence_tokens["labels"] = rejected_sequence_tokens["input_ids"][:]
-    # rejected_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [-100] * len(
-    #     prompt_tokens["input_ids"]
-    # )
 
     for k, toks in {
         "response": response_sequence_tokens,
-        #"rejected": rejected_sequence_tokens,
         "prompt": prompt_tokens,
     }.items():
         for type_key, tokens in toks.items():
@@ -172,13 +140,13 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
     return batch
 
 # query text
-query = "Write a summary of the picture."
+query = "Write an informative summary of the picture."
 # prompt text with <image> token
 prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
 # partial response text
-response = "The man is in a hotel room. There is a backpack and suitcase on the"
+response = "A person is sitting in a chair in a park. There is a suitcase next to them. In the background there is a large"
 # image path
-image_path = './data/vg/VG_100K/2338846.jpg'
+image_path = './data/vg/VG_100K/2348476.jpg'
 
 # get the inputs for the model
 data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
