@@ -17,9 +17,9 @@ nltk==3.8.1
 # python -c "import nltk; nltk.download('punkt')"
 # python -c "import nltk; nltk.download('averaged_perceptron_tagger')"
 # python -c "import nltk; nltk.download('wordnet')"
-einops
-tiktoken
-matplotlib
-pillow
+einops==0.8.1
+tiktoken==0.9.0
+matplotlib==3.10.1
+pillow==11.2.1
 transformers_stream_generator
-wandb
+wandb==0.19.9
