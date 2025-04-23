@@ -17,6 +17,8 @@ device = 'cuda'
 torch.set_default_device(device)
 
 # PROBLEM: DPA produces negative text which may not have logical sense
+# HYPOTHESIS: If we have an image of cat, the chosen response contains 'cat' and the model is hallucinating
+#             and predicts the toke 'dog'. We want the rejected response to contain 'dog' instead of another token.
 # EXPERIMENT: Take an image, a query and a partial response and compute the probabilities of the next response token
 #             for both the reference and DPA model
 
@@ -126,12 +128,9 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
 
     # the final result will be of this format
     #     batch = {
-    #     "chosen_input_ids": [101, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # input token IDs for the prompt + chosen response
-    #     "chosen_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask
-    #     "chosen_labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # labels for the prompt + chosen response with prompt part masked
-    #     "rejected_input_ids": [101, 2023, 2003, 1996, 3446, 3430, 1012, 102, 1],  # input token IDs for the prompt + rejected response
-    #     "rejected_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask
-    #     "rejected_labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 3446, 3430, 1012, 102, 1],  # labels for the prompt + rejected response with prompt part masked
+    #     "response_input_ids": [101, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # input token IDs for the prompt + response
+    #     "response_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask
+    #     "response__labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # labels for the prompt + chosen response with prompt part masked
     #     "prompt_input_ids": [101, 2023, 2003, 2019, 2742, 3430, 2007, 2019, 999, 1],  # input token IDs for the prompt with image tokens
     #     "prompt_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask for the prompt
     #     "image": <tensor representation of the image>  # image tensor
@@ -139,14 +138,73 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
 
     return batch
 
+# # query text
+# query = "Summarize the visual content of the image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "A person is sitting in a chair in a park. There is a suitcase next to him. In the background there is a large"
+# # image path
+# image_path = './data/vg/VG_100K/2348476.jpg'
+
+# # query text
+# query = "Summarize the visual content of the image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "The man is sitting on a chair in a"
+# # image path
+# image_path = './data/vg/VG_100K/2348476.jpg'
+
+# # query text
+# query = "Summarize the visual content of the image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "A person is sitting in a chair in a park. There is a suitcase next to them. There is a fountain in the background. On the grass there are some"
+# # image path
+# image_path = './data/vg/VG_100K/2348476.jpg'
+
+# # query text
+# query = "Write a detailed description of the given image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "A black cat with a white collar is sitting on a black suitcase. The cat is facing away from the camera and has its tail wrapped around its"
+# # image path
+# image_path = './data/vg/VG_100K/2346507.jpg'
+
+# {
+#     "prompt": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nPlease provide a short description of this image. ASSISTANT:",
+#     "chosen": "The image shows four men standing in a row. The man on the right is wearing a maroon colored shirt. There is a white wall behind them with a shelf on it.",
+#     "rejected": "The image displays four people standing in a line. The person on the right is wearing a maroon colored bag. There is a white ceiling behind them with a picture on it.",
+#     "img_path": "vg/VG_100K/2323025.jpg"
+# }
+
+# # query text
+# query = "Please provide a short description of this image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "The image shows four men standing in a row. The man on the right is wearing a shirt which is colored in"
+# # image path
+# image_path = './data/vg/VG_100K/2323025.jpg'
+
+# {
+#     "prompt": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nProvide a one-sentence caption for the provided image. ASSISTANT:",
+#     "chosen": "The image shows a man standing outside an airport with several pieces of luggage.",
+#     "rejected": "The image depicts a person standing outside an airport with multiple pieces of luggage.",
+#     "img_path": "vg/VG_100K/2329458.jpg"
+# }
+
 # query text
-query = "Write an informative summary of the picture."
+query = "Provide a detailed description of the given image."
 # prompt text with <image> token
 prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
 # partial response text
-response = "A person is sitting in a chair in a park. There is a suitcase next to them. In the background there is a large"
+response = "The image is of a pigeon standing on a table. The table is covered with a white tablecloth. There are chairs around the table. The chairs are red and made of wood. There is a glass window on the left side. The pigeon is grey and white. On the back of the chair is a tag colored in"
 # image path
-image_path = './data/vg/VG_100K/2348476.jpg'
+image_path = './data/vg/VG_100K_2/2415092.jpg'
 
 # get the inputs for the model
 data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
@@ -191,7 +249,7 @@ def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
 
         # print the top probabilities
         for tok, prob in probabilities[:top]:
-            result = result + f"{tok:<10}" + f"{prob:6.4f}" + "\n"
+            result = result + f"{tok:<15}" + f"{prob:6.4f}" + "\n"
             #print(f"{tok} {prob:.4f}")
     
     return result
