@@ -16,9 +16,9 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
-# PROBLEM: DPA produces negative text which may not have logical sense
+# PROBLEM: Existing hallucinations in DPA still exist if negative phrases don't contain the hallucinated object
 # HYPOTHESIS: If we have an image of cat, the chosen response contains 'cat' and the model is hallucinating
-#             and predicts the toke 'dog'. We want the rejected response to contain 'dog' instead of another token.
+#             and predicts the token 'dog'. We want the rejected response to contain 'dog' instead of another token.
 # EXPERIMENT: Take an image, a query and a partial response and compute the probabilities of the next response token
 #             for both the reference and DPA model
 
@@ -197,20 +197,40 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
 #     "img_path": "vg/VG_100K/2329458.jpg"
 # }
 
+# # query text
+# query = "Provide a detailed description of the given image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "The image is of a pigeon standing on a table. The table is covered with a white tablecloth. There are chairs around the table. The chairs are red and made of wood. There is a glass window on the left side. The pigeon is grey and white. On the back of the chair is a tag colored in"
+# # image path
+# image_path = './data/vg/VG_100K_2/2415092.jpg'
+
+# # query text
+# query = "Describe the image in detail."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "The image shows a place setting on a brown table. There are two plates on the table. On the other plate is a serving of grapes and some"
+# # image path
+# image_path = './data/vg/VG_100K_2/2377627.jpg'
+
 # query text
-query = "Provide a detailed description of the given image."
+query = "Give a short and clear explanation of the subsequent image."
 # prompt text with <image> token
 prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
 # partial response text
-response = "The image is of a pigeon standing on a table. The table is covered with a white tablecloth. There are chairs around the table. The chairs are red and made of wood. There is a glass window on the left side. The pigeon is grey and white. On the back of the chair is a tag colored in"
+response = "A blue and white semi-truck with an empty flatbed trailer is parked in a parking lot next to a river. In the background, there is a yellow"
 # image path
-image_path = './data/vg/VG_100K_2/2415092.jpg'
+image_path = './data/vg/VG_100K_2/2396016.jpg'
 
 # get the inputs for the model
 data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
 #print(data)
 
-# function to get the top token probabilities
+# function that will be given a partial response
+# and we get the last token's corresponding top output probabilities
+# these are the probabilities of the next token
 def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
     # list to store probabilities of each token
     probabilities = []
