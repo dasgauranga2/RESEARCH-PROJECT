@@ -16,6 +16,13 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
+# PROBLEM: Negative text mining causes the model to dissociate from false negative phrases (phrases which are semantically correct)​
+# HYPOTHESIS: The negative phrases are created by changing some of the phrases in the chosen response but, 
+#             it is not checked if that negative phrase still correct describes the corresponding phrase in the chosen response​
+# EXPERIMENT: Take an image, a query and a partial response and compute the probability of the next response token
+#             for such a token that is similar to the token in the chosen response but still correct
+#             for both the reference and DPA model and compare them 
+
 # load the base model
 reference_model = AutoModelForCausalLM.from_pretrained(
     'BAAI/Bunny-v1_0-3B',
@@ -55,12 +62,6 @@ dpa_model.eval()
 tokenizer = AutoTokenizer.from_pretrained(
     checkpoint_path,
     trust_remote_code=True)
-
-# # function to crop an image
-# def crop_image(image):
-#     resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
-#     image = resize_cropper(image.squeeze(0)).unsqueeze(0)
-#     return image
 
 # processes a single data point
 def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
@@ -132,16 +133,49 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
 
     return batch
 
+# # query text
+# query = "Relay a brief, clear account of the picture shown."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "Standing next to the gray truck is a"
+# # image path
+# image_path = './data/vg/VG_100K/2316038.jpg'
+# # token whose logits we want
+# target_token = 'person'
+
+# # query text
+# query = "Summarize the visual content of the image."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "In the picture there are three"
+# # image path
+# image_path = './data/vg/VG_100K/2354829.jpg'
+# # token whose logits we want
+# target_token = 'children'
+
+# # query text
+# query = "Narrate the contents of the image with precision."
+# # prompt text with <image> token
+# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+# # partial response text
+# response = "Standing near a store is a man and a"
+# # image path
+# image_path = './data/vg/VG_100K/2344962.jpg'
+# # token whose logits we want
+# target_token = 'lady'
+
 # query text
-query = "Relay a brief, clear account of the picture shown."
+query = "Present a compact description of the photo."
 # prompt text with <image> token
 prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
 # partial response text
-response = "Standing next to the gray truck is a"
+response = "Tennis is being played by a"
 # image path
-image_path = './data/vg/VG_100K/2316038.jpg'
+image_path = './data/vg/VG_100K/2362406.jpg'
 # token whose logits we want
-target_token = 'person'
+target_token = 'guy'
 
 # get the inputs for the model
 data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
@@ -180,9 +214,9 @@ def last_token_prob(model, input_ids, attention_mask, image, tokenizer, token=No
 
         # get the token ids of the token whose logits we want
         token_ids = tokenizer(token, add_special_tokens=False)['input_ids']
-        # check if the token has not been split into multiple tokens
-        if len(token_ids) > 1:
-            raise Exception("Target token is split into multiple tokens")
+        # # check if the token has not been split into multiple tokens
+        # if len(token_ids) > 1:
+        #     raise Exception("Target token is split into multiple tokens")
         
         # get the token id of the token we want the logits for
         token_id = token_ids[0]
