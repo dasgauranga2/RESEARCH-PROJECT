@@ -260,13 +260,8 @@ def top_token_probs(model, input_ids, attention_mask, image, tokenizer, top=5):
 
         # sort list of probabilities
         probabilities.sort(key=lambda x:x[1], reverse=True) 
-
-        # print the top probabilities
-        for tok, prob in probabilities[:top]:
-            result = result + f"{tok:<15}" + f"{prob:6.4f}" + "\n"
-            #print(f"{tok} {prob:.4f}")
     
-    return result
+    return probabilities[:top]
 
 # #top_token_probs(model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer)
 # print("Reference model Probs")
@@ -307,8 +302,10 @@ def generate_phrase_inp_out_pairs(masked_answer):
     return result
 
 correct_answer_masked = "A <MASK> man </MASK> is lying on a <MASK> bed </MASK> in a hotel room. There is a <MASK> black </MASK> backpack, a <MASK> brown </MASK> suitcase, and a <MASK> white </MASK> telephone on the <MASK> bed </MASK>. The <MASK> window </MASK> has <MASK> light </MASK> <MASK> pink </MASK> curtains and <MASK> white </MASK> blinds."
+hallucinated_answer_masked = "A <MASK> dog </MASK> is resting on a <MASK> couch </MASK> in a hotel room. There is a <MASK> blue </MASK> backpack, a <MASK> red </MASK> suitcase, and a <MASK> black </MASK> telephone on the <MASK> couch </MASK>. The <MASK> door </MASK> has <MASK> dark </MASK> <MASK> blue </MASK> curtains and <MASK> black </MASK> blinds."
 
-pairs = generate_phrase_inp_out_pairs(correct_answer_masked)
+correct_pairs = generate_phrase_inp_out_pairs(correct_answer_masked)
+hallucinated_pairs = generate_phrase_inp_out_pairs(hallucinated_answer_masked)
 
 # query text
 query = "Write a terse but informative summary of the picture."
@@ -319,11 +316,11 @@ prompt = f"A chat between a curious user and an artificial intelligence assistan
 # image path
 image_path = './data/vg/VG_100K/2338846.jpg'
 
-for inp, out in pairs:
+for (inp, correct_out), (_, hallucinated_out) in zip(correct_pairs, hallucinated_pairs):
     # get the inputs for the model
     data = prepare_inputs(prompt, inp, image_path, tokenizer, reference_model)
 
     ttp = top_token_probs(reference_model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer)
 
-    print(f"Input: {inp}\nOutput: {out}")
+    print(f"Input: {inp}\nCorrect output: {correct_out}\nIncorrect output: {hallucinated_out}")
     print(f"Top-5 Probabilities:\n{ttp}\n")
