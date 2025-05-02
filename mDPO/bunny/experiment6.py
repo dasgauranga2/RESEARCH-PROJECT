@@ -228,43 +228,48 @@ def generate_phrase_inp_out_pairs(masked_answer):
 with open('./data/dpa_data.json') as file:
     data = json.load(file)
 #print(data[0])
+#print(data[1]['correct_answer_masked'])
 
+# sub-optimal hallucination count
 soh_count = 0
 
-# # correct_answer_masked = "A <MASK> man </MASK> is lying on a <MASK> bed </MASK> in a hotel room. There is a <MASK> black </MASK> backpack, a <MASK> brown </MASK> suitcase, and a <MASK> white </MASK> telephone on the <MASK> bed </MASK>. The <MASK> window </MASK> has <MASK> light </MASK> <MASK> pink </MASK> curtains and <MASK> white </MASK> blinds."
-# # hallucinated_answer_masked = "A <MASK> dog </MASK> is resting on a <MASK> couch </MASK> in a hotel room. There is a <MASK> blue </MASK> backpack, a <MASK> red </MASK> suitcase, and a <MASK> black </MASK> telephone on the <MASK> couch </MASK>. The <MASK> door </MASK> has <MASK> dark </MASK> <MASK> blue </MASK> curtains and <MASK> black </MASK> blinds."
-correct_answer_masked = data[20]['correct_answer_masked']
-hallucinated_answer_masked = data[20]['hallucinated_answer_masked']
+for i in range(len(data)):
 
-correct_pairs = generate_phrase_inp_out_pairs(correct_answer_masked)
-hallucinated_pairs = generate_phrase_inp_out_pairs(hallucinated_answer_masked)
+    # # correct_answer_masked = "A <MASK> man </MASK> is lying on a <MASK> bed </MASK> in a hotel room. There is a <MASK> black </MASK> backpack, a <MASK> brown </MASK> suitcase, and a <MASK> white </MASK> telephone on the <MASK> bed </MASK>. The <MASK> window </MASK> has <MASK> light </MASK> <MASK> pink </MASK> curtains and <MASK> white </MASK> blinds."
+    # # hallucinated_answer_masked = "A <MASK> dog </MASK> is resting on a <MASK> couch </MASK> in a hotel room. There is a <MASK> blue </MASK> backpack, a <MASK> red </MASK> suitcase, and a <MASK> black </MASK> telephone on the <MASK> couch </MASK>. The <MASK> door </MASK> has <MASK> dark </MASK> <MASK> blue </MASK> curtains and <MASK> black </MASK> blinds."
+    correct_answer_masked = data[i]['correct_answer_masked']
+    hallucinated_answer_masked = data[i]['hallucinated_answer_masked']
 
-# query text
-query = data[20]['question'].replace('<image>','').replace('\n','')
-# prompt text with <image> token
-prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "A person is sitting in a chair in a park. There is a suitcase next to him. In the background there is a large"
-# image path
-image_path = './data/' + data[20]['image']
+    correct_pairs = generate_phrase_inp_out_pairs(correct_answer_masked)
+    hallucinated_pairs = generate_phrase_inp_out_pairs(hallucinated_answer_masked)
 
-for (inp, correct_out), (_, hallucinated_out) in zip(correct_pairs, hallucinated_pairs):
-    # get the inputs for the model
-    data = prepare_inputs(prompt, inp, image_path, tokenizer, reference_model)
+    # query text
+    query = data[i]['question'].replace('<image>','').replace('\n','')
+    # prompt text with <image> token
+    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+    # # partial response text
+    # response = "A person is sitting in a chair in a park. There is a suitcase next to him. In the background there is a large"
+    # image path
+    image_path = './data/' + data[i]['image']
 
-    ttp = top_token_probs(reference_model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer)
+    for (inp, correct_out), (_, hallucinated_out) in zip(correct_pairs, hallucinated_pairs):
+        # get the inputs for the model
+        input_data = prepare_inputs(prompt, inp, image_path, tokenizer, reference_model)
 
-    #print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
-    #print(f"Top-5 Probabilities:\n{ttp}\n")
-    if correct_out.lower() != ttp[0][0].strip().lower():
-        if hallucinated_out != ttp[0][0]:
-            soh_count += 1
-            print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
-            print(f"Top-5 Probabilities:\n{ttp}\n")
-        # if hallucinated_out != ttp[1][0]:
-        #     soh_count += 1
-    # else:
-    #     if hallucinated_out != ttp[0][0]:
-    #         soh_count += 1
+        ttp = top_token_probs(reference_model, input_data["response_input_ids"], input_data["response_attention_mask"], input_data["image"], tokenizer)
 
-print(soh_count)
+        # check if the model has made the incorrect prediction
+        if correct_out.lower() != ttp[0][0].strip().lower():
+            # check if the hallucinated phrase is the token predicted by the model
+            if hallucinated_out.lower() != ttp[0][0].strip().lower():
+                soh_count += 1
+                #print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
+                #print(f"Top-5 Probabilities:\n{ttp}\n")
+            # if hallucinated_out != ttp[1][0]:
+            #     soh_count += 1
+        # else:
+        #     if hallucinated_out != ttp[0][0]:
+        #         soh_count += 1
+
+    if i%10 == 0:
+        print(f"Average SOH Count: {soh_count/(i+1):.2f}")
