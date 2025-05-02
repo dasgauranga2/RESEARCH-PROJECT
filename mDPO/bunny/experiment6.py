@@ -29,33 +29,33 @@ reference_model = AutoModelForCausalLM.from_pretrained(
     device_map='auto',
     trust_remote_code=True)
 
-# # load the base model
-# dpa_model = AutoModelForCausalLM.from_pretrained(
-#     'BAAI/Bunny-v1_0-3B',
-#     torch_dtype=torch.float16, # float32 for cpu
-#     device_map='auto',
-#     trust_remote_code=True)
+# load the base model
+dpa_model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-v1_0-3B',
+    torch_dtype=torch.float16, # float32 for cpu
+    device_map='auto',
+    trust_remote_code=True)
 
 # path of saved checkpoint
 checkpoint_path = './checkpoint/dpa_bunny'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
-# if use_lora:
-#     dpa_model = PeftModel.from_pretrained(
-#         dpa_model,
-#         checkpoint_path
-#     )
+if use_lora:
+    dpa_model = PeftModel.from_pretrained(
+        dpa_model,
+        checkpoint_path
+    )
 
-#     dpa_model = dpa_model.merge_and_unload()
+    dpa_model = dpa_model.merge_and_unload()
 
 # load the vision towers
 reference_model.get_vision_tower().load_model()
-#dpa_model.get_vision_tower().load_model()
+dpa_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
 reference_model.eval()
-#dpa_model.eval()
+dpa_model.eval()
 
 # load the model tokenizer
 tokenizer = AutoTokenizer.from_pretrained(
@@ -256,15 +256,19 @@ for i in range(len(data)):
         # get the inputs for the model
         input_data = prepare_inputs(prompt, inp, image_path, tokenizer, reference_model)
 
-        ttp = top_token_probs(reference_model, input_data["response_input_ids"], input_data["response_attention_mask"], input_data["image"], tokenizer)
+        ref_ttp = top_token_probs(reference_model, input_data["response_input_ids"], input_data["response_attention_mask"], input_data["image"], tokenizer)
+        dpa_ttp = top_token_probs(dpa_model, input_data["response_input_ids"], input_data["response_attention_mask"], input_data["image"], tokenizer)
 
-        # check if the model has made the incorrect prediction
-        if correct_out.lower() != ttp[0][0].strip().lower():
+        # check if the reference model has made the incorrect prediction
+        if correct_out.lower() != ref_ttp[0][0].strip().lower():
             # check if the hallucinated phrase is the token predicted by the model
-            if hallucinated_out.lower() != ttp[0][0].strip().lower():
-                soh_count += 1
-                #print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
-                #print(f"Top-5 Probabilities:\n{ttp}\n")
+            if hallucinated_out.lower() != ref_ttp[0][0].strip().lower():
+                # check the DPA model as well if hallucionations exist
+                if ref_ttp[0][0].strip().lower() == dpa_ttp[0][0].strip().lower():
+                    soh_count += 1
+                    #print(f"Input: {inp}\nChosen phrase: {correct_out}\nRejected phrase: {hallucinated_out}")
+                    #print(f"Top-5 Reference Probabilities:\n{ref_ttp}")
+                    #print(f"Top-5 DPA Probabilities:\n{dpa_ttp}\n")
             # if hallucinated_out != ttp[1][0]:
             #     soh_count += 1
         # else:
@@ -272,4 +276,4 @@ for i in range(len(data)):
         #         soh_count += 1
 
     if i%10 == 0:
-        print(f"Average SOH Count: {soh_count/(i+1):.2f}")
+        print(f"Average SOH :{soh_count:4} out of {i+1:4} samples")
