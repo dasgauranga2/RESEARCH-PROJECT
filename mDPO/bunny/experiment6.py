@@ -5,7 +5,7 @@ from PIL import Image
 import warnings
 from peft import PeftModel
 from bunny_utils.util.mm_utils import tokenizer_image_token
-from torchvision.transforms import v2
+import json
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -133,83 +133,6 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
     return batch
 
 # # query text
-# query = "Summarize the visual content of the image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "A person is sitting in a chair in a park. There is a suitcase next to him. In the background there is a large"
-# # image path
-# image_path = './data/vg/VG_100K/2348476.jpg'
-
-# # query text
-# query = "Summarize the visual content of the image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "The man is sitting on a chair in a"
-# # image path
-# image_path = './data/vg/VG_100K/2348476.jpg'
-
-# # query text
-# query = "Summarize the visual content of the image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "A person is sitting in a chair in a park. There is a suitcase next to them. There is a fountain in the background. On the grass there are some"
-# # image path
-# image_path = './data/vg/VG_100K/2348476.jpg'
-
-# # query text
-# query = "Write a detailed description of the given image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "A black cat with a white collar is sitting on a black suitcase. The cat is facing away from the camera and has its tail wrapped around its"
-# # image path
-# image_path = './data/vg/VG_100K/2346507.jpg'
-
-# {
-#     "prompt": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nPlease provide a short description of this image. ASSISTANT:",
-#     "chosen": "The image shows four men standing in a row. The man on the right is wearing a maroon colored shirt. There is a white wall behind them with a shelf on it.",
-#     "rejected": "The image displays four people standing in a line. The person on the right is wearing a maroon colored bag. There is a white ceiling behind them with a picture on it.",
-#     "img_path": "vg/VG_100K/2323025.jpg"
-# }
-
-# # query text
-# query = "Please provide a short description of this image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "The image shows four men standing in a row. The man on the right is wearing a shirt which is colored in"
-# # image path
-# image_path = './data/vg/VG_100K/2323025.jpg'
-
-# {
-#     "prompt": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nProvide a one-sentence caption for the provided image. ASSISTANT:",
-#     "chosen": "The image shows a man standing outside an airport with several pieces of luggage.",
-#     "rejected": "The image depicts a person standing outside an airport with multiple pieces of luggage.",
-#     "img_path": "vg/VG_100K/2329458.jpg"
-# }
-
-# # query text
-# query = "Provide a detailed description of the given image."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "The image is of a pigeon standing on a table. The table is covered with a white tablecloth. There are chairs around the table. The chairs are red and made of wood. There is a glass window on the left side. The pigeon is grey and white. On the back of the chair is a tag colored in"
-# # image path
-# image_path = './data/vg/VG_100K_2/2415092.jpg'
-
-# # query text
-# query = "Describe the image in detail."
-# # prompt text with <image> token
-# prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-# # partial response text
-# response = "The image shows a place setting on a brown table. There are two plates on the table. On the other plate is a serving of grapes and some"
-# # image path
-# image_path = './data/vg/VG_100K_2/2377627.jpg'
-
-# # query text
 # query = "Give a short and clear explanation of the subsequent image."
 # # prompt text with <image> token
 # prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
@@ -301,20 +224,29 @@ def generate_phrase_inp_out_pairs(masked_answer):
     
     return result
 
-correct_answer_masked = "A <MASK> man </MASK> is lying on a <MASK> bed </MASK> in a hotel room. There is a <MASK> black </MASK> backpack, a <MASK> brown </MASK> suitcase, and a <MASK> white </MASK> telephone on the <MASK> bed </MASK>. The <MASK> window </MASK> has <MASK> light </MASK> <MASK> pink </MASK> curtains and <MASK> white </MASK> blinds."
-hallucinated_answer_masked = "A <MASK> dog </MASK> is resting on a <MASK> couch </MASK> in a hotel room. There is a <MASK> blue </MASK> backpack, a <MASK> red </MASK> suitcase, and a <MASK> black </MASK> telephone on the <MASK> couch </MASK>. The <MASK> door </MASK> has <MASK> dark </MASK> <MASK> blue </MASK> curtains and <MASK> black </MASK> blinds."
+# open the file with queries and image paths
+with open('./data/dpa_data.json') as file:
+    data = json.load(file)
+#print(data[0])
+
+soh_count = 0
+
+# # correct_answer_masked = "A <MASK> man </MASK> is lying on a <MASK> bed </MASK> in a hotel room. There is a <MASK> black </MASK> backpack, a <MASK> brown </MASK> suitcase, and a <MASK> white </MASK> telephone on the <MASK> bed </MASK>. The <MASK> window </MASK> has <MASK> light </MASK> <MASK> pink </MASK> curtains and <MASK> white </MASK> blinds."
+# # hallucinated_answer_masked = "A <MASK> dog </MASK> is resting on a <MASK> couch </MASK> in a hotel room. There is a <MASK> blue </MASK> backpack, a <MASK> red </MASK> suitcase, and a <MASK> black </MASK> telephone on the <MASK> couch </MASK>. The <MASK> door </MASK> has <MASK> dark </MASK> <MASK> blue </MASK> curtains and <MASK> black </MASK> blinds."
+correct_answer_masked = data[20]['correct_answer_masked']
+hallucinated_answer_masked = data[20]['hallucinated_answer_masked']
 
 correct_pairs = generate_phrase_inp_out_pairs(correct_answer_masked)
 hallucinated_pairs = generate_phrase_inp_out_pairs(hallucinated_answer_masked)
 
 # query text
-query = "Write a terse but informative summary of the picture."
+query = data[20]['question'].replace('<image>','').replace('\n','')
 # prompt text with <image> token
 prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
 # # partial response text
 # response = "A person is sitting in a chair in a park. There is a suitcase next to him. In the background there is a large"
 # image path
-image_path = './data/vg/VG_100K/2338846.jpg'
+image_path = './data/' + data[20]['image']
 
 for (inp, correct_out), (_, hallucinated_out) in zip(correct_pairs, hallucinated_pairs):
     # get the inputs for the model
@@ -322,5 +254,17 @@ for (inp, correct_out), (_, hallucinated_out) in zip(correct_pairs, hallucinated
 
     ttp = top_token_probs(reference_model, data["response_input_ids"], data["response_attention_mask"], data["image"], tokenizer)
 
-    print(f"Input: {inp}\nCorrect output: {correct_out}\nIncorrect output: {hallucinated_out}")
-    print(f"Top-5 Probabilities:\n{ttp}\n")
+    #print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
+    #print(f"Top-5 Probabilities:\n{ttp}\n")
+    if correct_out.lower() != ttp[0][0].strip().lower():
+        if hallucinated_out != ttp[0][0]:
+            soh_count += 1
+            print(f"Input: {inp}\nCorrect output: {correct_out}\nHallucinated output: {hallucinated_out}")
+            print(f"Top-5 Probabilities:\n{ttp}\n")
+        # if hallucinated_out != ttp[1][0]:
+        #     soh_count += 1
+    # else:
+    #     if hallucinated_out != ttp[0][0]:
+    #         soh_count += 1
+
+print(soh_count)
