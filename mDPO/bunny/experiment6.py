@@ -115,7 +115,7 @@ def prepare_inputs(prompt, partial_response, img_path, tokenizer, model):
             batch[f"{k}_{type_key}"] = tokens
 
     #print('./data/merged_images/' + img_path)
-    image = Image.open(img_path)
+    image = Image.open(img_path).convert("RGB")
     # process the image into a tensor
     image_tensor = model.process_images([image], model.config).to(dtype=model.dtype)
     batch["image"] = image_tensor
@@ -230,8 +230,16 @@ with open('./data/dpa_data.json') as file:
 #print(data[0])
 #print(data[1]['correct_answer_masked'])
 
-# sub-optimal hallucination count
+# reference model hallucination count
+rh_count = 0
+# persistent hallucination count
+ph_count = 0
+# count when rejected phrase does not contain hallucinated object
 soh_count = 0
+
+# text file where results will be saved
+with open("results/dpa_phr.txt", "w") as file:
+    file.write(f"DPA Persistent Hallucinations\n\n")
 
 for i in range(len(data)):
 
@@ -261,11 +269,31 @@ for i in range(len(data)):
 
         # check if the reference model has made the incorrect prediction
         if correct_out.lower() != ref_ttp[0][0].strip().lower():
-            # check if the hallucinated phrase is the token predicted by the model
-            if hallucinated_out.lower() != ref_ttp[0][0].strip().lower():
-                # check the DPA model as well if hallucionations exist
-                if ref_ttp[0][0].strip().lower() == dpa_ttp[0][0].strip().lower():
+            rh_count += 1
+            # check if the DPA model has made the same incorrect prediction
+            if ref_ttp[0][0].strip().lower() == dpa_ttp[0][0].strip().lower(): 
+                ph_count += 1
+                #print(f"Input: {inp}\nChosen phrase: {correct_out}\nRejected phrase: {hallucinated_out}")
+                #print(f"Top-5 Reference Probabilities:\n{ref_ttp}")
+                #print(f"Top-5 DPA Probabilities:\n{dpa_ttp}\n")
+                
+                # save the results in a text file
+                with open("results/dpa_phr.txt", "a") as file:
+                    file.write(f"Input: {inp}\nChosen phrase: {correct_out}\nRejected phrase: {hallucinated_out}\n")
+                    file.write(f"Top-5 Reference Probabilities:\n{ref_ttp}\n")
+                    file.write(f"Top-5 DPA Probabilities:\n{dpa_ttp}\n\n")
+
+                # check if the hallucinated phrase does not contain the hallucinated object
+                if hallucinated_out.lower() != ref_ttp[0][0].strip().lower():
                     soh_count += 1
+
+        # # check if the reference model has made the incorrect prediction
+        # if correct_out.lower() != ref_ttp[0][0].strip().lower():
+        #     # check if the hallucinated phrase is the token predicted by the model
+        #     if hallucinated_out.lower() != ref_ttp[0][0].strip().lower():
+        #         # check the DPA model as well if hallucionations exist
+        #         if ref_ttp[0][0].strip().lower() == dpa_ttp[0][0].strip().lower():
+        #             soh_count += 1
                     #print(f"Input: {inp}\nChosen phrase: {correct_out}\nRejected phrase: {hallucinated_out}")
                     #print(f"Top-5 Reference Probabilities:\n{ref_ttp}")
                     #print(f"Top-5 DPA Probabilities:\n{dpa_ttp}\n")
@@ -276,4 +304,4 @@ for i in range(len(data)):
         #         soh_count += 1
 
     if i%10 == 0:
-        print(f"Average SOH :{soh_count:4} out of {i+1:4} samples")
+        print(f"Persistent Hallucination Rate: {ph_count/rh_count:.2f}\tSub-Optimal Hallucination Count: {soh_count}")
