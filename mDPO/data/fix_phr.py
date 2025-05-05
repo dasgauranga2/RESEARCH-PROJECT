@@ -7,6 +7,7 @@ from peft import PeftModel
 from bunny_utils.util.mm_utils import tokenizer_image_token
 import json
 import re
+import time
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -17,7 +18,7 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
-# PROBLEM: Existing hallucinations in DPA still exist if negative phrases don't contain the hallucinated object
+# PROBLEM: Existing hallucinations in DPA still exist if rejected phrases don't contain the hallucinated object
 # HYPOTHESIS: If we have an image of cat, the chosen response contains 'cat' and the model is hallucinating
 #             and predicts the token 'dog'. We want the rejected response to contain 'dog' instead of another token.
 # EXPERIMENT: Take an image, a query and a partial response and compute the probabilities of the next response token
@@ -230,6 +231,8 @@ def create_rejected_answer(correct_answer, replacements):
         result += correct_answer[last_index:start] + replacement
         last_index = end
 
+    result += correct_answer[last_index:]
+
     return result
 
 # open the file with queries and image paths
@@ -238,6 +241,8 @@ with open('./data/dpa_data.json') as file:
 
 # list where final data will be stored
 result_data = []
+
+start = time.time()
 
 for i in range(len(data)):
 
@@ -281,5 +286,8 @@ for i in range(len(data)):
     })
 
     if i%10 == 0:
+        end = time.time()
+        print(f"Completed with {len(result_data)} samples\tTime: {(end-start)/60:.2f}")
+        start = end
         with open("./data/dpa_data_fixed2.json", "w") as file:
             json.dump(result_data, file, indent=4)
