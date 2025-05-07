@@ -13,11 +13,11 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--word_association", type=str, default='data/relation.json')
     parser.add_argument("--safe_words", type=str, default='data/safe_words.txt')
-    parser.add_argument("--inference_data", type=str)
+    #parser.add_argument("--inference_data", type=str)
     parser.add_argument("--annotation", type=str, default='data/annotations.json')
     parser.add_argument("--metrics", type=str, default='data/metrics.txt')
     parser.add_argument("--similarity_score", type=float, default=0.8)
-    parser.add_argument('--evaluation_type', choices=['a', 'g', 'd', 'de', 'da', 'dr'], help='a: all tasks and dimensions    g: generative task    d: descriminative task    de, da, dr: existence, attribute, relation')
+    #parser.add_argument('--evaluation_type', choices=['a', 'g', 'd', 'de', 'da', 'dr'], help='a: all tasks and dimensions    g: generative task    d: descriminative task    de, da, dr: existence, attribute, relation')
     args = parser.parse_args()
     return args
 
@@ -53,7 +53,7 @@ def init():
     return metrics
 
 # main function which is run when the script is executed
-def main(args):
+def main(args, file_path):
     # get the metrics which we are measuring
     metrics = init()
 
@@ -78,27 +78,19 @@ def main(args):
     # set the dimension which determines which type of task is being evaluated
     # in our case we are only interested in generative task
     # so the 'g' key will be set to True
-    dimension = {'g': False,'de': False, 'da': False, 'dr': False}
-    if args.evaluation_type == 'a':
-        for key in dimension.keys():
-            dimension[key] = True
-    elif args.evaluation_type == 'g':
-        dimension['g'] = True
-    elif args.evaluation_type == 'd':
-        dimension['de'] = True
-        dimension['da'] = True
-        dimension['dr'] = True
-    else:
-        dimension[args.evaluation_type] = True
+    dimension = {'g': True}
     
     # file which contains our model's generated responses
-    inference_data = json.load(open(args.inference_data, 'r', encoding='utf-8'))
+    inference_data = json.load(open(file_path, 'r', encoding='utf-8'))
     # file which contains the ground-truth
     # for the generative task, it contains list of nouns which are present in the image
     # and a list of commonly hallucinated objects 
     ground_truth = json.load(open(args.annotation, 'r', encoding='utf-8'))
 
     #hal_count = 0
+
+    # dictionary to store all hallucinations made by the model 
+    all_hallucinations = {}
 
     for i in range(len(inference_data)):
         
@@ -190,8 +182,12 @@ def main(args):
                 if safe_flag_list[idx] == 1:
                     # if yes, add it to the hallucinated word list
                     hallucinated_words.append(after_process_nouns[idx])
+
+            all_hallucinations[id] = hallucinated_words
+    
+    return all_hallucinations
             
-            print(f"ID: {id}\tHallucinated word list: {hallucinated_words}\n")
+            #print(f"ID: {id}\tHallucinated word list: {hallucinated_words}\n")
             # if len(hallucinated_words) > 0:
             #     hal_count += 1
 
@@ -220,8 +216,23 @@ def main(args):
     #     print("Cover:\t\t", Cover)
     #     print("Hal:\t\t", Ha_p)
     #     print("Cog:\t\t", Ha, "\n")
-    
 
 if __name__ == "__main__":
+
     args = get_args()
-    main(args)
+    
+    file_path1 = 'mdpo_results.json'
+    hall1 = main(args, file_path1)
+    hal_count1 = 0
+    for halls in hall1.values():
+        if len(halls) > 0:
+            hal_count1 += 1
+    print(f"mDPO Hal Rate: {(hal_count1/len(hall1))*100:.2f}")
+
+    file_path2 = 'dpa_results.json'
+    hall2 = main(args, file_path2)
+    hal_count2 = 0
+    for halls in hall2.values():
+        if len(halls) > 0:
+            hal_count2 += 1
+    print(f"DPA Hal Rate: {(hal_count2/len(hall2))*100:.2f}")
