@@ -7,6 +7,7 @@ import warnings
 import argparse
 nlp = spacy.load("en_core_web_lg")
 warnings.filterwarnings("ignore", category=UserWarning)
+from collections import Counter
 
 # function to get script arguments
 def get_args():
@@ -37,25 +38,12 @@ def extract_nouns(text):
     nouns = [lemmatizer.lemmatize(word) for word, pos in tagged if pos.startswith('NN')]
     return nouns
 
-# gets the necessary metrics and initializes them all to zero
-def init():
-    metrics = {}
-    with open(args.metrics, "r") as file:
-        lines = file.readlines()
-
-    for line in lines:
-        parts = line.strip().split('=')
-        if len(parts) == 2:
-            variable_name = parts[0].strip()
-            variable_value = eval(parts[1].strip())
-            metrics[variable_name] = variable_value
-            
-    return metrics
-
-# main function which is run when the script is executed
+# function when given the file of generated responses
+# will return a dictinoary of hallucinations
+# such that key will be ID and values is a list of hallucinations 
 def main(args, file_path):
-    # get the metrics which we are measuring
-    metrics = init()
+    # # get the metrics which we are measuring
+    # metrics = init()
 
     association = json.load(open(args.word_association, 'r', encoding='utf-8'))
 
@@ -89,7 +77,7 @@ def main(args, file_path):
 
     #hal_count = 0
 
-    # dictionary to store all hallucinations made by the model 
+    # dictionary to store all hallucinations made
     all_hallucinations = {}
 
     for i in range(len(inference_data)):
@@ -186,53 +174,57 @@ def main(args, file_path):
             all_hallucinations[id] = hallucinated_words
     
     return all_hallucinations
-            
-            #print(f"ID: {id}\tHallucinated word list: {hallucinated_words}\n")
-            # if len(hallucinated_words) > 0:
-            #     hal_count += 1
-
-    #print(f"Hallucination Rate: {(hal_count/len(inference_data))*100:.2f}")
-
-            # metrics['chair_score'] += sum(safe_flag_list)
-            # metrics['chair_num'] += len(safe_flag_list)
-            # metrics['safe_cover_score'] += sum(safe_list[-safe_len:])
-            # metrics['safe_cover_num'] += len(safe_list[-safe_len:])
-            # metrics['hallu_cover_score'] += sum(ha_list[-ha_len:])
-            # metrics['hallu_cover_num'] += len(ha_list[-ha_len:])
-            # if sum(safe_flag_list) == 0:
-            #     metrics['non_hallu_score'] += 1
-            # metrics['non_hallu_num'] += 1
-
-            # list of hallucinations in the generated response
-                    
-
-    # if dimension['g']:
-    #     CHAIR = round(metrics['chair_score'] / metrics['chair_num'] * 100, 1)
-    #     Cover = round(metrics['safe_cover_score'] / metrics['safe_cover_num'] * 100, 1)
-    #     Ha = round(metrics['hallu_cover_score'] / metrics['hallu_cover_num'] * 100, 1)
-    #     Ha_p = round(100 - metrics['non_hallu_score'] / metrics['non_hallu_num'] * 100, 1)
-    #     print("Generative Task:")
-    #     print("CHAIR:\t\t", CHAIR)
-    #     print("Cover:\t\t", Cover)
-    #     print("Hal:\t\t", Ha_p)
-    #     print("Cog:\t\t", Ha, "\n")
 
 if __name__ == "__main__":
 
     args = get_args()
-    
-    file_path1 = 'mdpo_results.json'
-    hall1 = main(args, file_path1)
-    hal_count1 = 0
-    for halls in hall1.values():
-        if len(halls) > 0:
-            hal_count1 += 1
-    print(f"mDPO Hal Rate: {(hal_count1/len(hall1))*100:.2f}")
 
-    file_path2 = 'dpa_results.json'
-    hall2 = main(args, file_path2)
-    hal_count2 = 0
-    for halls in hall2.values():
-        if len(halls) > 0:
-            hal_count2 += 1
-    print(f"DPA Hal Rate: {(hal_count2/len(hall2))*100:.2f}")
+    ref_path = 'bunny_results.json'
+    # get the hallucinations made by the reference model
+    ref_halls = main(args, ref_path)
+
+    dpa_path = 'mdpo_results.json'
+    # get the hallucinations made by the dpa model
+    dpa_halls = main(args, dpa_path)
+
+    total = 0
+    per_count = 0
+
+    for id, ref_hall_list in ref_halls.items():
+        if len(ref_hall_list) > 0:
+            # get the corresponding hallucinations made by the DPA model
+            dpa_hall_list = dpa_halls[id]
+
+            ref_hall_count = Counter(ref_hall_list)
+            dpa_hall_count = Counter(dpa_hall_list)
+
+            per_hall_count = ref_hall_count & dpa_hall_count
+
+            per_count = per_count + sum(per_hall_count.values())
+            total = total + sum(ref_hall_count.values())
+
+    print(f"Persistent Hallucination Rate: {(per_count/total)*100:.2f}")
+
+    # file_path1 = 'mdpo_results.json'
+    # hall1 = main(args, file_path1)
+    # hal_count1 = 0
+    # for halls in hall1.values():
+    #     if len(halls) > 0:
+    #         hal_count1 += 1
+    # print(f"mDPO Hal Rate: {(hal_count1/len(hall1))*100:.2f}")
+
+    # file_path2 = 'dpa_results.json'
+    # hall2 = main(args, file_path2)
+    # hal_count2 = 0
+    # for halls in hall2.values():
+    #     if len(halls) > 0:
+    #         hal_count2 += 1
+    # print(f"DPA Hal Rate: {(hal_count2/len(hall2))*100:.2f}")
+
+    # file_path3 = 'bunny_results.json'
+    # hall3 = main(args, file_path3)
+    # hal_count3 = 0
+    # for halls in hall3.values():
+    #     if len(halls) > 0:
+    #         hal_count3 += 1
+    # print(f"Bunny Hal Rate: {(hal_count3/len(hall3))*100:.2f}")
