@@ -13,6 +13,7 @@ PyYAML==6.0.1
 submitit==1.5.1
 spacy==3.6.0
 nltk==3.8.1
+# python -m spacy download en_core_web_sm
 # python -m spacy download en_core_web_lg
 # python -c "import nltk; nltk.download('punkt')"
 # python -c "import nltk; nltk.download('averaged_perceptron_tagger')"
