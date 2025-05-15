@@ -18,7 +18,7 @@ from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPo
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import ModelOutput
 from torchvision.transforms import v2
-
+import random
 
 class SigLipImageProcessor:
     def __init__(self,
@@ -2324,7 +2324,8 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             mask_visual_tokens: Optional[bool] = False,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         if mask_visual_tokens:
-            images = self.crop_images(images)
+            #images = self.crop_images(images)
+            images = self.crop_images_with_noise(images)
 
         if inputs_embeds is None:
             (
@@ -2360,6 +2361,38 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
         for image in images:
             resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
             image = resize_cropper(image.squeeze(0)).unsqueeze(0)
+            new_images.append(image)
+        return new_images
+
+    def crop_images_with_noise(self, images):
+        new_images = []
+        for image in images:
+            image = image.squeeze(0)  # shape: [C, H, W]
+
+            C, H, W = image.shape
+
+            # Random crop size (1–4% of image area)
+            #scale = random.uniform(0.005, 0.01)
+            scale = 0.04
+            aspect_ratio = random.uniform(0.5, 2.0)
+            h_crop = int((scale * H * W * aspect_ratio) ** 0.5)
+            w_crop = int((scale * H * W / aspect_ratio) ** 0.5)
+
+            h_crop = min(h_crop, H)
+            w_crop = min(w_crop, W)
+
+            # Random crop position
+            top = random.randint(0, H - h_crop)
+            left = random.randint(0, W - w_crop)
+
+            # Generate Gaussian noise patch
+            noise_patch = torch.normal(mean=0.5, std=0.2, size=(C, h_crop, w_crop)).to(image.device)
+            noise_patch = torch.clamp(noise_patch, 0.0, 1.0)  # optional if your image is in [0, 1] range
+
+            # Replace patch in image
+            image[:, top:top + h_crop, left:left + w_crop] = noise_patch
+
+            image = image.unsqueeze(0)
             new_images.append(image)
         return new_images
 

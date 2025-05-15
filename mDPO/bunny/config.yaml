@@ -3,14 +3,14 @@ beta: 0.1 # DPO beta value
 # output_dir: null  # to be set by the script
 bf16: true
 fix_vit: true
-num_train_epochs: 1
+num_train_epochs: 3
 per_device_train_batch_size: 4
 per_device_eval_batch_size: 4
-gradient_accumulation_steps: 16
+gradient_accumulation_steps: 8
 # evaluation_strategy: "epoch"
-# save_strategy: "epoch" # if save_strategy is used the checkpoint will be saved after each epoch and save_steps will be ignored
-save_steps: 50  # interval at which checkpoint will be saved
-save_total_limit: 1
+save_strategy: "epoch" # if save_strategy is used the checkpoint will be saved after each epoch and save_steps will be ignored
+# save_steps: 50  # interval at which checkpoint will be saved
+save_total_limit: 3
 learning_rate: 0.00001
 weight_decay: 0.05
 adam_beta2: 0.98
@@ -28,6 +28,6 @@ remove_unused_columns: false
 lora_r: 64  
 lora_alpha: 128 
 lora_target_modules: all-linear 
-dataset_path: ./data/dpa_data_fixed.json # preference dataset path
-run_name: dpa_bunny
-output_dir: ./checkpoint/dpa_bunny # directory where checkpoints and outputs will be saved
+dataset_path: ./data/vlfeedback_llava_10k.json # preference dataset path
+run_name: mdpo_bunny2
+output_dir: ./checkpoint/mdpo_bunny2 # directory where checkpoints and outputs will be saved

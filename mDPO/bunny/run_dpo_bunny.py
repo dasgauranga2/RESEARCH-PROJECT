@@ -291,14 +291,14 @@ def train(config_dict):
     # print the number of trainable parameters of the model
     print_trainable_parameters(model)
     
-    # custome trainer to train the model using DPO on the DPA dataset
-    trainer = DPATrainer(
+    # custom trainer to train the model using mDPO
+    trainer = mDPOTrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=DPADataCollatorForDPO(
+        data_collator=mDPODataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,
