@@ -65,7 +65,26 @@ def center_crop_image(pil_image, crop_width=40, crop_height=40):
 
     return cropped_image
 
-# list to store the differences between sobel variances of the images
+# function to divide an image into n x n grid of patches
+# which will return all the n^2 patches
+def divide_image_into_grid(pil_image, n):
+    width, height = pil_image.size
+    patch_width = width // n
+    patch_height = height // n
+
+    patches = []
+    for i in range(n):
+        for j in range(n):
+            left = j * patch_width
+            upper = i * patch_height
+            right = left + patch_width
+            lower = upper + patch_height
+            patch = pil_image.crop((left, upper, right, lower))
+            patches.append(patch)
+
+    return patches
+
+# list to store the differences between sobel sharpness of the images
 diff = []
 
 for i in range(500):
@@ -86,11 +105,15 @@ for i in range(500):
     corrupted_image = to_pil(corrupted_image_tensor.squeeze())
 
     # get the sobel sharpness of both the images
-    orig_pvar = sobel_sharpness(center_crop_image(image))
-    corrup_pvar = sobel_sharpness(center_crop_image(corrupted_image))
+    # orig_pvar = sobel_sharpness(center_crop_image(image))
+    # corrup_pvar = sobel_sharpness(center_crop_image(corrupted_image))
 
-    diff.append(orig_pvar-corrup_pvar)
+    for orig_patch, corrup_patch in zip(divide_image_into_grid(image, 2), divide_image_into_grid(corrupted_image, 2)):
+        orig_sharp = sobel_sharpness(center_crop_image(orig_patch))
+        corrup_sharp = sobel_sharpness(center_crop_image(corrup_patch))
+
+        diff.append(orig_sharp-corrup_sharp)
 
 #print(image)
 #print(mean_diff)
-print(f"Sobel Variance: {sum(diff) / len(diff):.2f}")
+print(f"Mean Sobel Sharpness Difference: {sum(diff) / len(diff):.2f}")
