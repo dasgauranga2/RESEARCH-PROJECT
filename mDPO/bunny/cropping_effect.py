@@ -15,8 +15,8 @@ import json
 # COMPARING THE PIXEL-INTENSITY GRADIENT VARIANCES FOR BOTH ORIGINAL AND CORRUPTED IMAGES
 # TO MEASURE THEIR SHARPNESS
 
-# function to apply the mDPO cropping
-def crop_image(image):
+# function to apply the mDPO image corruption
+def corrupt_image(image):
     resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
     image = resize_cropper(image.squeeze(0)).unsqueeze(0)
     return image
@@ -30,7 +30,7 @@ to_pil = transforms.ToPILImage()
 with open('./data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
-# function to calculate the sobel variance in the pixel-intensity differences
+# function to calculate the sobel variance in the pixel-intensity gradients
 # which measures the sharpness in the image
 def sobel_variance(pil_image):
     # convert the image to grayscale
@@ -49,6 +49,22 @@ def sobel_variance(pil_image):
     # calculate and return the variance of the gradient magnitude
     return np.var(gradient_magnitude)
 
+# function to crop a center patch of the image
+def center_crop_image(pil_image, crop_width=20, crop_height=20):
+    # get image size
+    width, height = pil_image.size
+
+    # define the crop box
+    left = (width - crop_width) // 2
+    upper = (height - crop_height) // 2
+    right = left + crop_width
+    lower = upper + crop_height
+
+    # crop the image center
+    cropped_image = pil_image.crop((left, upper, right, lower))
+
+    return cropped_image
+
 # list to store the differences between sobel variances of the images
 mean_diff = []
 
@@ -57,21 +73,24 @@ for i in range(100):
     # open the image
     image = Image.open('./data/merged_images/' + data[i]['img_path']).convert("RGB")
 
+    # get image dimensions
+    width, height = image.size
+
     # convert the image to a tensor
     image_tensor = to_tensor(image)
 
     # apply image corruption
-    corrupted_image_tensor = crop_image(image_tensor)
+    corrupted_image_tensor = corrupt_image(image_tensor)
 
     # convert image tensor back back to PIL Image
     corrupted_image = to_pil(corrupted_image_tensor.squeeze())
 
     # get the sobel variances of both the images
-    orig_pvar = sobel_variance(image)
-    corrup_pvar = sobel_variance(corrupted_image)
+    orig_pvar = sobel_variance(center_crop_image(image))
+    corrup_pvar = sobel_variance(center_crop_image(corrupted_image))
 
     mean_diff.append(orig_pvar-corrup_pvar)
 
 #print(image)
-print(mean_diff)
-print(sum(mean_diff) / len(mean_diff))
+#print(mean_diff)
+print(f"Sobel Variance: {sum(mean_diff) / len(mean_diff):.2f}")
