@@ -13,7 +13,7 @@ from scipy import ndimage
 import json
 
 # COMPARING THE PIXEL-INTENSITY GRADIENT VARIANCES FOR BOTH ORIGINAL AND CORRUPTED IMAGES
-# TO MEASURE THEIR SHARPNESS
+# TO COMPARE THEIR SHARPNESS
 
 # function to apply the mDPO image corruption
 def corrupt_image(image):
@@ -30,9 +30,9 @@ to_pil = transforms.ToPILImage()
 with open('./data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
-# function to calculate the sobel variance in the pixel-intensity gradients
-# which measures the sharpness in the image
-def sobel_variance(pil_image):
+# function to calculate the sharpness of an image
+# using the sobel filter gradient values
+def sobel_sharpness(pil_image):
     # convert the image to grayscale
     gray_image = pil_image.convert('L')
     
@@ -47,10 +47,10 @@ def sobel_variance(pil_image):
     gradient_magnitude = np.hypot(sobel_x, sobel_y)
     
     # calculate and return the variance of the gradient magnitude
-    return np.var(gradient_magnitude)
+    return np.mean(gradient_magnitude)
 
 # function to crop a center patch of the image
-def center_crop_image(pil_image, crop_width=20, crop_height=20):
+def center_crop_image(pil_image, crop_width=40, crop_height=40):
     # get image size
     width, height = pil_image.size
 
@@ -66,9 +66,9 @@ def center_crop_image(pil_image, crop_width=20, crop_height=20):
     return cropped_image
 
 # list to store the differences between sobel variances of the images
-mean_diff = []
+diff = []
 
-for i in range(100):
+for i in range(500):
 
     # open the image
     image = Image.open('./data/merged_images/' + data[i]['img_path']).convert("RGB")
@@ -85,12 +85,12 @@ for i in range(100):
     # convert image tensor back back to PIL Image
     corrupted_image = to_pil(corrupted_image_tensor.squeeze())
 
-    # get the sobel variances of both the images
-    orig_pvar = sobel_variance(center_crop_image(image))
-    corrup_pvar = sobel_variance(center_crop_image(corrupted_image))
+    # get the sobel sharpness of both the images
+    orig_pvar = sobel_sharpness(center_crop_image(image))
+    corrup_pvar = sobel_sharpness(center_crop_image(corrupted_image))
 
-    mean_diff.append(orig_pvar-corrup_pvar)
+    diff.append(orig_pvar-corrup_pvar)
 
 #print(image)
 #print(mean_diff)
-print(f"Sobel Variance: {sum(mean_diff) / len(mean_diff):.2f}")
+print(f"Sobel Variance: {sum(diff) / len(diff):.2f}")
