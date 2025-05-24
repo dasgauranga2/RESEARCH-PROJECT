@@ -193,64 +193,22 @@ avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
 # reshape to 27 x 27 (no. of patches) to get the spatial attention map
 spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
 
-# save the attention map as an image
-plt.imshow(spatial_attn_map, cmap='hot')  # 'hot' colormap for heatmap
-plt.axis('off')
-plt.tight_layout(pad=0)
+# reopen the image and then resize it
+orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
+
+# figure with two columns for the original image and the spatial attention map
+fig, axes = plt.subplots(1, 2, figsize=(12, 8))
+
+# plot the original image
+axes[0].imshow(orig_image_resized)
+axes[0].set_title("Original Image")
+axes[0].axis('off')
+
+# plot the spatial attention map
+axes[1].imshow(spatial_attn_map, cmap='hot')
+axes[1].set_title("Spatial Attention Map")
+axes[1].axis('off')
+
+plt.tight_layout()
 plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0)
 plt.close()
-
-# # function to calculate the log-probability of the response
-# def compute_response_log_probs(model, input_ids, attention_mask, labels, image):
-
-#     with torch.no_grad():
-#         # feedforward the inputs
-#         model_outputs = model(
-#             input_ids=torch.tensor(input_ids, dtype=torch.long).unsqueeze(0),  # add batch dimension
-#             attention_mask=torch.tensor(attention_mask, dtype=torch.long).unsqueeze(0),
-#             images=image,
-#             labels=None,
-#             use_cache=False,
-#             output_attentions=False,
-#             output_hidden_states=False,
-#             return_dict=True
-#         )
-
-#         # get the logits
-#         model_logits = model_outputs.logits.squeeze()
-
-#         # get the response token ids
-#         response_token_ids = [token_id for token_id in labels if token_id != -100]
-
-#         # response length
-#         response_length = len(response_token_ids)
-
-#         # get the logits corresponding to response tokens
-#         response_logits = model_logits[-(response_length+1):-1,:]
-
-#         # get the response token ids tensor
-#         target_ids = torch.tensor(response_token_ids, dtype=torch.long)
-
-#         # compute log-probabilities
-#         response_log_probs = F.log_softmax(response_logits, dim=-1)
-#         # get log-probabilities corresponding to response tokens
-#         response_token_log_probs = response_log_probs[range(response_length), target_ids]
-
-#         # total log-probability
-#         total_response_log_prob = response_token_log_probs.sum()
-
-#         return total_response_log_prob
-
-# #print(data['image'].shape)
-# # get the corruped image
-# corrupted_image = crop_image(data['image'])
-
-# reference_log_probs = compute_response_log_probs(reference_model, data['chosen_input_ids'], data['chosen_attention_mask'], data['chosen_labels'], data['image'])
-# mdpo_log_probs = compute_response_log_probs(mdpo_model, data['chosen_input_ids'], data['chosen_attention_mask'], data['chosen_labels'], data['image'])
-# reference_corrupted_log_probs = compute_response_log_probs(reference_model, data['chosen_input_ids'], data['chosen_attention_mask'], data['chosen_labels'], corrupted_image)
-# mdpo_corrupted_log_probs = compute_response_log_probs(mdpo_model, data['chosen_input_ids'], data['chosen_attention_mask'], data['chosen_labels'], corrupted_image)
-
-# print(f"Reference Log-Probs: {reference_log_probs:.4f}")
-# print(f"mDPO Log-Probs: {mdpo_log_probs:.4f}")
-# print(f"Corrupted Reference Log-Probs: {reference_corrupted_log_probs:.4f}")
-# print(f"Corrupted mDPO Log-Probs: {mdpo_corrupted_log_probs:.4f}")
