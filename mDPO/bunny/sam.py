@@ -9,6 +9,7 @@ from torchvision.transforms import v2
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -22,49 +23,50 @@ torch.set_default_device(device)
 # CALCULATE THE SPATIAL ATTENTION MAP
 # WHICH SHOWS WHERE THE LLM IS LOOKING AT THE IMAGE WHEN ANSWERING A QUESTION
 
-# load the reference model
 # BUNNY PROCESSES THE INPUT IMAGE IN THE FOLLOWING STEPS
 # 1. THE INPUT IMAGE IS RESIZED TO 384 x 384
 # 2. THE IMAGE IS SPLIT INTO PATCHES OF SIZE 14 x 14 WHICH MEANS THERE ARE 27*27=729 PATCHES
 # 3. THE PATCHES ARE GIVEN TO THE ViT TO PRODUCE PATCH EMBEDDINGS (VISION ENCODER)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
-# NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 576 TOKENS
-reference_model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
-    torch_dtype=torch.float16, # float32 for cpu
-    device_map='auto',
-    trust_remote_code=True)
+# NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# # load the mdpo model
-# mdpo_model = AutoModelForCausalLM.from_pretrained(
+# # load the reference model
+# reference_model = AutoModelForCausalLM.from_pretrained(
 #     'BAAI/Bunny-v1_0-3B',
 #     torch_dtype=torch.float16, # float32 for cpu
 #     device_map='auto',
 #     trust_remote_code=True)
+
+# load the mdpo model
+mdpo_model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-v1_0-3B',
+    torch_dtype=torch.float16, # float32 for cpu
+    device_map='auto',
+    trust_remote_code=True)
 
 # path of saved checkpoint
 checkpoint_path = './checkpoint/mdpo_bunny'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
-# if use_lora:
-#     mdpo_model = PeftModel.from_pretrained(
-#         mdpo_model,
-#         checkpoint_path
-#     )
+if use_lora:
+    mdpo_model = PeftModel.from_pretrained(
+        mdpo_model,
+        checkpoint_path
+    )
 
-#     mdpo_model = mdpo_model.merge_and_unload()
+    mdpo_model = mdpo_model.merge_and_unload()
 
 # load the vision towers
-reference_model.get_vision_tower().load_model()
-#mdpo_model.get_vision_tower().load_model()
+#reference_model.get_vision_tower().load_model()
+mdpo_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
-reference_model.eval()
-#mdpo_model.eval()
+#reference_model.eval()
+mdpo_model.eval()
 
 #print(mdpo_model.get_vision_tower().is_loaded)
-print(reference_model.get_vision_tower().is_loaded)
+#print(reference_model.get_vision_tower().is_loaded)
 
 # load the model tokenizer
 tokenizer = AutoTokenizer.from_pretrained(
@@ -151,18 +153,18 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
     return batch
 
 # prompt text with <image> token
-prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nDescribe the image. ASSISTANT:"
+prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\nWhat is the color of this animal. ASSISTANT:"
 # response text
-response = "There is an orange cat in a jungle."
+response = "The cat is of orange colour."
 # image path
 image_path = './data/test3.png'
 
 # get the inputs for the model
-data = prepare_inputs(prompt, response, image_path, tokenizer, reference_model)
+data = prepare_inputs(prompt, response, image_path, tokenizer, mdpo_model)
 #print(data)
 
 # get the model outputs
-outputs = reference_model(
+outputs = mdpo_model(
     input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
     attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long).unsqueeze(0),
     images=data["image"],
@@ -175,8 +177,11 @@ outputs = reference_model(
 
 #logits = outputs.logits.squeeze()
 
-# get the attention scores from the last layer
-att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
+# list to store all the spatial attention maps
+all_sam = []
+
+# # get the attention scores from the last layer
+# att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
 
 # index position of first answer token
 first_answer_token_idx = len(data["prompt_input_ids"]) + 728
@@ -184,30 +189,57 @@ first_answer_token_idx = len(data["prompt_input_ids"]) + 728
 # index position where the first image token is located
 image_token_pos = data["prompt_input_ids"].index(-200)
 
-# extract attention scores for the first answer token to the image tokens
-ans_img_attn_scores = att_scores[:, first_answer_token_idx, image_token_pos:image_token_pos+729] # (heads, 729)
+# get the attention scores for the last layer
+att_scores = outputs.attentions[-3].squeeze() # (heads, 781, 781)
 
-# average over attention heads
-avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
+for i in range(first_answer_token_idx, att_scores.shape[1]):
+    # extract attention scores for the i-th answer token to the image tokens
+    ans_img_attn_scores = att_scores[:, i, image_token_pos:image_token_pos+729] # (heads, 729)
 
-# reshape to 27 x 27 (no. of patches) to get the spatial attention map
-spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
+    # average over attention heads
+    avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
 
-# reopen the image and then resize it
+    # reshape to 27 x 27 (no. of patches) to get the spatial attention map
+    spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
+
+    # save the attention map
+    all_sam.append(spatial_attn_map)
+
+# # stack all the (27, 27) maps into shape (total no. of maps, 27, 27)
+# all_sam_tensor = np.stack(all_sam, axis=0)
+
+# # average across all the spatial attention maps
+# final_spatial_attn_map = np.mean(all_sam_tensor, axis=0)  # shape: (27, 27)
+
+# reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
+# crop the upper-left portion of the image
+crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
+orig_image_cropped = orig_image_resized.crop(crop_box)
+
+# no. of columns
+cols = 4
+# no. of rows
+rows = math.ceil((len(all_sam)+1) / cols)
 
 # figure with two columns for the original image and the spatial attention map
-fig, axes = plt.subplots(1, 2, figsize=(12, 8))
+fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
+axes = axes.flatten()
 
 # plot the original image
-axes[0].imshow(orig_image_resized)
+axes[0].imshow(orig_image_cropped)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
-# plot the spatial attention map
-axes[1].imshow(spatial_attn_map, cmap='hot')
-axes[1].set_title("Spatial Attention Map")
-axes[1].axis('off')
+# plot all the sams
+for i, sam in enumerate(all_sam):
+    axes[i+1].imshow(sam, cmap='hot')
+    axes[i+1].set_title(f"Token {i + first_answer_token_idx}")
+    axes[i+1].axis('off')
+
+# turn off any unused subplots
+for j in range(len(all_sam)+1, len(axes)):
+    axes[j].axis('off')
 
 plt.tight_layout()
 plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0)
