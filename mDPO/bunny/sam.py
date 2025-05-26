@@ -151,34 +151,50 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
     # }
 
     return batch
-# generic query
+
+# generic query to calculate the relative attention
 generic_query = "Write a general description of the image."
 
-# # user query
-# query = "How many traffic lights are there in the image?"
-# # response text
-# response = "There are two traffic lights in the image."
-# # image path
-# image_path = './data/test/count1.jpg'
-
 # user query
-query = "How many bicycles are there in the image?"
+query = "How many traffic lights are there in the image?"
 # response text
-response = "There are three bicycles in the image."
+response = "There are two traffic lights in the image."
 # image path
-image_path = './data/test/count2.jpg'
+image_path = './data/test/count1.jpg'
 
-def spatial_attention_map(question, answer, path, model, tokenizer):
+# # user query
+# query = "How many bicycles are there in the image?"
+# # response text
+# response = "There are three bicycles in the image."
+# # image path
+# image_path = './data/test/count2.jpg'
+
+# # user query
+# query = "How many zebras are there in the image?"
+# # response text
+# response = "There are five zebras in the image."
+# # image path
+# image_path = './data/test/count3.jpg'
+
+# # user query
+# query = "How many people are there in the image?"
+# # response text
+# response = "There are four people in the image: a man, a woman, a girl, and a boy."
+# # image path
+# image_path = './data/test/count11.jpg'
+
+# function to calculate the spatial attention map
+def spatial_attention_map(question, answer, path, tokenizer, model):
     # prompt text with <image> token
     prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
 
     # get the inputs for the model
-    data = prepare_inputs(prompt, answer, path, tokenizer, mdpo_model)
+    data = prepare_inputs(prompt, answer, path, tokenizer, model)
 
     # get the model outputs
     outputs = model(
-        input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long).unsqueeze(0),
+        input_ids=torch.tensor(data["prompt_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
+        attention_mask=torch.tensor(data["prompt_attention_mask"], dtype=torch.long).unsqueeze(0),
         images=data["image"],
         labels=None,
         use_cache=False,
@@ -190,25 +206,33 @@ def spatial_attention_map(question, answer, path, model, tokenizer):
     # get the attention scores from the last layer
     att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
 
-    # index position of first answer token
-    first_answer_token_idx = len(data["prompt_input_ids"]) + 728
-
     # index position where the first image token is located
     image_token_pos = data["prompt_input_ids"].index(-200)
 
-    # extract attention scores for the first answer token to all the image tokens
-    ans_img_attn_scores = att_scores[:, first_answer_token_idx, image_token_pos:image_token_pos+729] # (heads, 729)
+    # extract attention scores from the last prompt token to all the image tokens
+    ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
     # average over attention heads
     avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
+
+    # normalize values
+    avg_attn = avg_attn / avg_attn.sum()
 
     # reshape to 27 x 27 (no. of patches) to get the spatial attention map
     spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
 
     return spatial_attn_map
 
-attn_map = spatial_attention_map(query, response, image_path, reference_model, tokenizer)
-generic_attn_map = spatial_attention_map(generic_query, response, image_path, reference_model, tokenizer)
+attn_map = spatial_attention_map(query, response, image_path, tokenizer, mdpo_model)
+generic_attn_map = spatial_attention_map(generic_query, response, image_path, tokenizer, mdpo_model)
+
+# calculate the relative attention map
+relative_attn_map = np.divide(
+    attn_map,
+    generic_attn_map,
+    out=np.zeros_like(attn_map),
+    where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
+)
 
 # reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
@@ -217,18 +241,19 @@ crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
 orig_image_cropped = orig_image_resized.crop(crop_box)
 
 # figure with two columns for the original image and the spatial attention map
-fig, axes = plt.subplots(1, 2, figsize=(12, 10))
+fig, axes = plt.subplots(1, 2, figsize=(10,6))
+#axes = axes.flatten()
 
 # plot the original image
 axes[0].imshow(orig_image_cropped)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
-# plot the relative attention map
-axes[1].imshow(attn_map/(generic_attn_map + 1e-6), cmap='hot')
-axes[1].set_title(f"Spatial Attention Map")
+axes[1].imshow(relative_attn_map, cmap='viridis')
+axes[1].set_title(f"Relative Attention Map")
 axes[1].axis('off')
 
-plt.tight_layout()
-plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0)
+plt.suptitle(f"Query: {query}", fontsize=16)
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
