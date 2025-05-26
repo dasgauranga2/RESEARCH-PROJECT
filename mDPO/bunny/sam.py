@@ -30,12 +30,12 @@ torch.set_default_device(device)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# load the reference model
-reference_model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
-    torch_dtype=torch.float16, # float32 for cpu
-    device_map='auto',
-    trust_remote_code=True)
+# # load the reference model
+# reference_model = AutoModelForCausalLM.from_pretrained(
+#     'BAAI/Bunny-v1_0-3B',
+#     torch_dtype=torch.float16, # float32 for cpu
+#     device_map='auto',
+#     trust_remote_code=True)
 
 # load the mdpo model
 mdpo_model = AutoModelForCausalLM.from_pretrained(
@@ -58,11 +58,11 @@ if use_lora:
     mdpo_model = mdpo_model.merge_and_unload()
 
 # load the vision towers
-reference_model.get_vision_tower().load_model()
+#reference_model.get_vision_tower().load_model()
 mdpo_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
-reference_model.eval()
+#reference_model.eval()
 mdpo_model.eval()
 
 #print(mdpo_model.get_vision_tower().is_loaded)
@@ -155,12 +155,12 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # generic query to calculate the relative attention
 generic_query = "Write a general description of the image."
 
-# user query
-query = "How many traffic lights are there in the image?"
-# response text
-response = "There are two traffic lights in the image."
-# image path
-image_path = './data/test/count1.jpg'
+# # user query
+# query = "How many traffic lights are there in the image?"
+# # response text
+# response = "There are two traffic lights in the image."
+# # image path
+# image_path = './data/test/count1.jpg'
 
 # # user query
 # query = "How many bicycles are there in the image?"
@@ -176,12 +176,12 @@ image_path = './data/test/count1.jpg'
 # # image path
 # image_path = './data/test/count3.jpg'
 
-# # user query
-# query = "How many people are there in the image?"
-# # response text
-# response = "There are four people in the image: a man, a woman, a girl, and a boy."
-# # image path
-# image_path = './data/test/count11.jpg'
+# user query
+query = "How many people are there in the image?"
+# response text
+response = "There are four people in the image: a man, a woman, a girl, and a boy."
+# image path
+image_path = './data/test/count11.jpg'
 
 # function to calculate the spatial attention map
 def spatial_attention_map(question, answer, path, tokenizer, model):
@@ -227,12 +227,17 @@ attn_map = spatial_attention_map(query, response, image_path, tokenizer, mdpo_mo
 generic_attn_map = spatial_attention_map(generic_query, response, image_path, tokenizer, mdpo_model)
 
 # calculate the relative attention map
+# perform safe division
 relative_attn_map = np.divide(
     attn_map,
     generic_attn_map,
     out=np.zeros_like(attn_map),
     where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
 )
+# find the maximum value
+max_valid_value = np.max(relative_attn_map)
+# in places where the generic is zero but actual is non-zero replace with the maximum value
+relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value
 
 # reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
