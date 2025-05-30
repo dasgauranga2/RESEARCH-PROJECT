@@ -20,7 +20,7 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
-# CALCULATE THE SPATIAL ATTENTION MAP
+# CALCULATE THE RELATIVE ATTENTION MAP
 # WHICH SHOWS WHERE THE LLM IS LOOKING AT THE IMAGE WHEN ANSWERING A QUESTION
 
 # BUNNY PROCESSES THE INPUT IMAGE IN THE FOLLOWING STEPS
@@ -30,12 +30,19 @@ torch.set_default_device(device)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# # load the reference model
-# reference_model = AutoModelForCausalLM.from_pretrained(
-#     'BAAI/Bunny-v1_0-3B',
-#     torch_dtype=torch.float16, # float32 for cpu
-#     device_map='auto',
-#     trust_remote_code=True)
+# load the reference model
+reference_model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-v1_0-3B',
+    torch_dtype=torch.float16, # float32 for cpu
+    device_map='auto',
+    trust_remote_code=True)
+
+# load the dpo model
+dpo_model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-v1_0-3B',
+    torch_dtype=torch.float16, # float32 for cpu
+    device_map='auto',
+    trust_remote_code=True)
 
 # load the mdpo model
 mdpo_model = AutoModelForCausalLM.from_pretrained(
@@ -45,24 +52,33 @@ mdpo_model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True)
 
 # path of saved checkpoint
-checkpoint_path = './checkpoint/mdpo_bunny'
+mdpo_checkpoint_path = './checkpoint/mdpo_bunny'
+dpo_checkpoint_path = './checkpoint/dpo_bunny'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
 if use_lora:
+    dpo_model = PeftModel.from_pretrained(
+        dpo_model,
+        dpo_checkpoint_path
+    )
+
     mdpo_model = PeftModel.from_pretrained(
         mdpo_model,
-        checkpoint_path
+        mdpo_checkpoint_path
     )
 
     mdpo_model = mdpo_model.merge_and_unload()
+    dpo_model = dpo_model.merge_and_unload()
 
 # load the vision towers
-#reference_model.get_vision_tower().load_model()
+reference_model.get_vision_tower().load_model()
+dpo_model.get_vision_tower().load_model()
 mdpo_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
-#reference_model.eval()
+reference_model.eval()
+dpo_model.eval()
 mdpo_model.eval()
 
 #print(mdpo_model.get_vision_tower().is_loaded)
@@ -70,7 +86,7 @@ mdpo_model.eval()
 
 # load the model tokenizer
 tokenizer = AutoTokenizer.from_pretrained(
-    checkpoint_path,
+    mdpo_checkpoint_path,
     trust_remote_code=True)
 
 # # function to crop an image
@@ -152,9 +168,6 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 
     return batch
 
-# generic query to calculate the relative attention
-generic_query = "Write a general description of the image."
-
 # # user query
 # query = "How many traffic lights are there in the image?"
 # # response text
@@ -162,12 +175,12 @@ generic_query = "Write a general description of the image."
 # # image path
 # image_path = './data/test/count1.jpg'
 
-# # user query
-# query = "How many bicycles are there in the image?"
-# # response text
-# response = "There are three bicycles in the image."
-# # image path
-# image_path = './data/test/count2.jpg'
+# user query
+query = "How many bicycles are there in the image?"
+# response text
+response = "There are three bicycles in the image."
+# image path
+image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
@@ -176,12 +189,47 @@ generic_query = "Write a general description of the image."
 # # image path
 # image_path = './data/test/count3.jpg'
 
-# user query
-query = "How many people are there in the image?"
-# response text
-response = "There are four people in the image: a man, a woman, a girl, and a boy."
-# image path
-image_path = './data/test/count11.jpg'
+# # user query
+# query = "How many players are there in the image?"
+# # response text
+# response = "There are three players."
+# # image path
+# image_path = './data/test/count4.jpg'
+
+# # user query
+# query = "How many chairs are there in the kitchen?"
+# # response text
+# response = "There are four chairs."
+# # image path
+# image_path = './data/test/count5.jpg'
+
+# # user query
+# query = "How many chairs are there in the image?"
+# # response text
+# response = "There are four chairs."
+# # image path
+# image_path = './data/test/count6.jpg'
+
+# # user query
+# query = "How many teddy bears are there in the image?"
+# # response text
+# response = "There are seven teddy bears."
+# # image path
+# image_path = './data/test/count8.jpg'
+
+# # user query
+# query = "How many traffic signs in the image?"
+# # response text
+# response = "There are three traffic signs."
+# # image path
+# image_path = './data/test/count9.jpg'
+
+# # user query
+# query = "How many cars are there in the image?"
+# # response text
+# response = "There are two cars."
+# # image path
+# image_path = './data/test/count10.jpg'
 
 # function to calculate the spatial attention map
 def spatial_attention_map(question, answer, path, tokenizer, model):
@@ -223,21 +271,28 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
 
     return spatial_attn_map
 
-attn_map = spatial_attention_map(query, response, image_path, tokenizer, mdpo_model)
-generic_attn_map = spatial_attention_map(generic_query, response, image_path, tokenizer, mdpo_model)
+# function to calculate the relative attention
+def relative_attention_map(question, answer, path, tokenizer, model):
+    # generic query to calculate the relative attention
+    generic_query = "Write a general description of the image."
 
-# calculate the relative attention map
-# perform safe division
-relative_attn_map = np.divide(
-    attn_map,
-    generic_attn_map,
-    out=np.zeros_like(attn_map),
-    where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
-)
-# find the maximum value
-max_valid_value = np.max(relative_attn_map)
-# in places where the generic is zero but actual is non-zero replace with the maximum value
-relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value
+    attn_map = spatial_attention_map(question, answer, path, tokenizer, model)
+    generic_attn_map = spatial_attention_map(generic_query, answer, path, tokenizer, model)
+
+    # calculate the relative attention map
+    # perform safe division
+    relative_attn_map = np.divide(
+        attn_map,
+        generic_attn_map,
+        out=np.zeros_like(attn_map),
+        where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
+    )
+    # find the maximum value
+    max_valid_value = np.max(relative_attn_map)
+    # in places where the generic is zero but actual is non-zero replace with the maximum value
+    relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value
+
+    return relative_attn_map
 
 # reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
@@ -245,18 +300,30 @@ orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
 crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
 orig_image_cropped = orig_image_resized.crop(crop_box)
 
+ref_rel_attn = relative_attention_map(query, response, image_path, tokenizer, reference_model)
+dpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, dpo_model)
+mdpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, mdpo_model)
+
 # figure with two columns for the original image and the spatial attention map
-fig, axes = plt.subplots(1, 2, figsize=(10,6))
+fig, axes = plt.subplots(2, 2, figsize=(8,6))
 #axes = axes.flatten()
 
 # plot the original image
-axes[0].imshow(orig_image_cropped)
-axes[0].set_title("Original Image")
-axes[0].axis('off')
+axes[0,0].imshow(orig_image_cropped)
+axes[0,0].set_title("Original Image")
+axes[0,0].axis('off')
 
-axes[1].imshow(relative_attn_map, cmap='viridis')
-axes[1].set_title(f"Relative Attention Map")
-axes[1].axis('off')
+axes[0,1].imshow(ref_rel_attn, cmap='viridis')
+axes[0,1].set_title(f"Reference Relative Attention Map")
+axes[0,1].axis('off')
+
+axes[1,0].imshow(dpo_rel_attn, cmap='viridis')
+axes[1,0].set_title(f"DPO Relative Attention Map")
+axes[1,0].axis('off')
+
+axes[1,1].imshow(mdpo_rel_attn, cmap='viridis')
+axes[1,1].set_title(f"mDPO Relative Attention Map")
+axes[1,1].axis('off')
 
 plt.suptitle(f"Query: {query}", fontsize=16)
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
