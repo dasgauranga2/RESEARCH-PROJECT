@@ -14,7 +14,7 @@ from transformers.trainer_pt_utils import LabelSmoother
 
 from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
 from data_collator_bunny_phi import mDPODataCollatorBunny, DPADataCollatorForDPO
-from dpo_trainer import mDPOTrainer, DPATrainer
+from dpo_trainer import mDPOTrainer, DPATrainer, VanillaDPOTrainer
 
 # run the script using the following command
 # CUDA_VISIBLE_DEVICES=0 python bunny/run_dpo_bunny.py
@@ -292,7 +292,7 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = mDPOTrainer(
+    trainer = VanillaDPOTrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
