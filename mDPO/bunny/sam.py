@@ -175,12 +175,12 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # # image path
 # image_path = './data/test/count1.jpg'
 
-# user query
-query = "How many bicycles are there in the image?"
-# response text
-response = "There are three bicycles in the image."
-# image path
-image_path = './data/test/count2.jpg'
+# # user query
+# query = "How many bicycles are there in the image?"
+# # response text
+# response = "There are three bicycles in the image."
+# # image path
+# image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
@@ -230,6 +230,34 @@ image_path = './data/test/count2.jpg'
 # response = "There are two cars."
 # # image path
 # image_path = './data/test/count10.jpg'
+
+# # user query
+# query = "How many people are there in the image?"
+# # response text
+# response = "There are four people in the image."
+# # image path
+# image_path = './data/test/count11.jpg'
+
+# # user query
+# query = "How many oysters can you see in the photo?"
+# # response text
+# response = "There are five oysters visible in the photo."
+# # image path
+# image_path = './data/test/count12.jpg'
+
+# # user query
+# query = "How many horses are there in the photo?"
+# # response text
+# response = "There are three horses in the photo."
+# # image path
+# image_path = './data/test/count13.jpg'
+
+# user query
+query = "How many forks can you see?"
+# response text
+response = "There are two forks."
+# image path
+image_path = './data/test/count14.jpg'
 
 # function to calculate the spatial attention map
 def spatial_attention_map(question, answer, path, tokenizer, model):
@@ -294,15 +322,46 @@ def relative_attention_map(question, answer, path, tokenizer, model):
 
     return relative_attn_map
 
+# function to generate the model's response
+def generate_response(question, path, tokenizer, model):
+    # prompt text
+    text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
+    text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
+    input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
+
+    # load the image
+    #image = Image.open('./AMBER/data/image/' + data['image']).convert('RGB')
+    image = Image.open(path).convert('RGB')
+    image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
+
+    # generate the model outputs
+    output_ids = model.generate(
+        input_ids,
+        images=image_tensor,
+        max_new_tokens=150,
+        use_cache=True,
+        repetition_penalty=1.0 # increase this to avoid chattering
+    )[0]
+
+    # get the generated text
+    response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip()
+
+    return response
+
 # reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
 # crop the upper-left portion of the image
 crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
 orig_image_cropped = orig_image_resized.crop(crop_box)
 
+# generate the relative attention of reference 
 ref_rel_attn = relative_attention_map(query, response, image_path, tokenizer, reference_model)
+# generate the relative attention of dpo 
 dpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, dpo_model)
+# generate the relative attention of mdpo 
 mdpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, mdpo_model)
+# generate mdpo's response
+mdpo_answer = generate_response(query, image_path, tokenizer, mdpo_model)
 
 # figure with two columns for the original image and the spatial attention map
 fig, axes = plt.subplots(2, 2, figsize=(8,6))
@@ -325,7 +384,7 @@ axes[1,1].imshow(mdpo_rel_attn, cmap='viridis')
 axes[1,1].set_title(f"mDPO Relative Attention Map")
 axes[1,1].axis('off')
 
-plt.suptitle(f"Query: {query}", fontsize=16)
+plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_answer}", fontsize=10)
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
