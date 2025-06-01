@@ -37,6 +37,13 @@ reference_model = AutoModelForCausalLM.from_pretrained(
     device_map='auto',
     trust_remote_code=True)
 
+# vision_tower = reference_model.get_vision_tower()
+# num_patches  = vision_tower.num_patches
+# patch_grid_N = int(num_patches ** 0.5)
+
+# print(num_patches)
+# print(patch_grid_N)
+
 # load the dpo model
 dpo_model = AutoModelForCausalLM.from_pretrained(
     'BAAI/Bunny-v1_0-3B',
@@ -224,6 +231,13 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # # image path
 # image_path = './data/test/count9.jpg'
 
+# user query
+query = "What colour is the traffic light glowing?"
+# response text
+response = "It is red colour."
+# image path
+image_path = './data/test/count9.jpg'
+
 # # user query
 # query = "How many cars are there in the image?"
 # # response text
@@ -252,12 +266,12 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # # image path
 # image_path = './data/test/count13.jpg'
 
-# user query
-query = "How many forks can you see?"
-# response text
-response = "There are two forks."
-# image path
-image_path = './data/test/count14.jpg'
+# # user query
+# query = "How many forks can you see?"
+# # response text
+# response = "There are two forks."
+# # image path
+# image_path = './data/test/count14.jpg'
 
 # function to calculate the spatial attention map
 def spatial_attention_map(question, answer, path, tokenizer, model):
@@ -291,8 +305,8 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
     # average over attention heads
     avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
 
-    # normalize values
-    avg_attn = avg_attn / avg_attn.sum()
+    # # normalize values
+    # avg_attn = avg_attn / avg_attn.sum()
 
     # reshape to 27 x 27 (no. of patches) to get the spatial attention map
     spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
@@ -315,10 +329,22 @@ def relative_attention_map(question, answer, path, tokenizer, model):
         out=np.zeros_like(attn_map),
         where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
     )
+    # the above division may still cause some overflow errors even if generic attention is not very small
+    # which will lead to the relative attention containing 'inf' values
+    # get positions which contain 'inf' values
+    inf_mask = np.isinf(relative_attn_map)
+    if np.any(inf_mask):
+        # find the maximum finite value
+        finite_values = relative_attn_map[~inf_mask]
+        max_finite = np.max(finite_values)
+
+        # assign that max_finite to every position that was inf
+        relative_attn_map[inf_mask] = max_finite
+
     # find the maximum value
     max_valid_value = np.max(relative_attn_map)
-    # in places where the generic is zero but actual is non-zero replace with the maximum value
-    relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value
+    # in places where the generic is zero or near-zero but actual is non-zero replace with half of maximum value
+    relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value/2
 
     return relative_attn_map
 
