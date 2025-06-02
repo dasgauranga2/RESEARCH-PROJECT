@@ -175,10 +175,10 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 
     return batch
 
-# user query
-query = "How many traffic lights are there in the image?"
-# image path
-image_path = './data/test/count1.jpg'
+# # user query
+# query = "How many traffic lights are there in the image?"
+# # image path
+# image_path = './data/test/count1.jpg'
 
 # # user query
 # query = "What colour are the traffic lights on the left?"
@@ -187,12 +187,10 @@ image_path = './data/test/count1.jpg'
 # # image path
 # image_path = './data/test/count1.jpg'
 
-# # user query
-# query = "How many bicycles are there in the image?"
-# # response text
-# response = "There are three bicycles in the image."
-# # image path
-# image_path = './data/test/count2.jpg'
+# user query
+query = "How many bicycles are there in the image?"
+# image path
+image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
@@ -307,7 +305,7 @@ def generate_response(question, path, tokenizer, model):
 # function to calculate the spatial attention map for each answer token
 def spatial_attention_map(question, answer, path, tokenizer, model):
     # list to store the spatial attention maps
-    sams = []
+    all_sam = []
 
     # prompt text with <image> token
     prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
@@ -328,15 +326,17 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
     )
 
     # get the attention scores from the last layer
-    att_scores = outputs.attentions[-3].squeeze() # (heads, 781, 781)
+    att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
+
+    assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
 
     # index position where the first image token is located
     image_token_pos = data["response_input_ids"].index(-200)
 
     # index position where the first answer token is located
-    ans_token_pos = len(data["prompt_input_ids"])+728
+    first_ans_idx = len(data["prompt_input_ids"])+728
 
-    for i in range(ans_token_pos, att_scores.shape[1]):
+    for i in range(first_ans_idx, att_scores.shape[1]):
         # extract attention scores when predicting i-th answer token
         ans_img_attn_scores = att_scores[:, i-1, image_token_pos:image_token_pos+729] # (heads, 729)
 
@@ -349,9 +349,18 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
         # reshape to 27 x 27 (no. of patches) to get the spatial attention map
         spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
 
-        sams.append(spatial_attn_map)
+        # get the i-th answer token
+        ans_token = tokenizer.decode(data["response_input_ids"][i-728])
 
-    return sams
+        all_sam.append((spatial_attn_map,ans_token))
+
+    return all_sam
+
+# reopen the original image and then resize it
+orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
+# crop the upper-left portion of the image
+crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
+orig_image_cropped = orig_image_resized.crop(crop_box)
 
 # generate mdpo's response
 mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
@@ -360,19 +369,24 @@ mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
 mdpo_spt_attn_maps = spatial_attention_map(query, mdpo_response, image_path, tokenizer, mdpo_model)
 
 cols = 4
-rows = (len(mdpo_spt_attn_maps)+cols-1) // cols
+rows = (len(mdpo_spt_attn_maps)+cols) // cols
 
 # figure with two columns for the original image and the spatial attention map
 fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
 axes = axes.flatten()
 
 # plot the original image
-for i in range(len(mdpo_spt_attn_maps)):
-    axes[i].imshow(mdpo_spt_attn_maps[i], cmap='viridis')
-    axes[i].set_title(f"Token: {i+1}")
-    axes[i].axis('off')
+axes[0].imshow(orig_image_cropped)
+axes[0].set_title("Original Image")
+axes[0].axis('off')
 
-for i in range(len(mdpo_spt_attn_maps), len(axes)):
+# plot the original image
+for i in range(len(mdpo_spt_attn_maps)):
+    axes[i+1].imshow(mdpo_spt_attn_maps[i][0], cmap='viridis')
+    axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
+    axes[i+1].axis('off')
+
+for i in range(len(mdpo_spt_attn_maps)+1, len(axes)):
     axes[i].axis('off')
 
 plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_response}", fontsize=10)
@@ -414,14 +428,6 @@ plt.close()
 #     relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value/2
 
 #     return relative_attn_map
-
-
-
-# # reopen the original image and then resize it
-# orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
-# # crop the upper-left portion of the image
-# crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
-# orig_image_cropped = orig_image_resized.crop(crop_box)
 
 # # generate the relative attention of reference 
 # ref_rel_attn = relative_attention_map(query, response, image_path, tokenizer, reference_model)
