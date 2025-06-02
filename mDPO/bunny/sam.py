@@ -30,12 +30,12 @@ torch.set_default_device(device)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# load the reference model
-reference_model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
-    torch_dtype=torch.float16, # float32 for cpu
-    device_map='auto',
-    trust_remote_code=True)
+# # load the reference model
+# reference_model = AutoModelForCausalLM.from_pretrained(
+#     'BAAI/Bunny-v1_0-3B',
+#     torch_dtype=torch.float16, # float32 for cpu
+#     device_map='auto',
+#     trust_remote_code=True)
 
 # vision_tower = reference_model.get_vision_tower()
 # num_patches  = vision_tower.num_patches
@@ -44,12 +44,12 @@ reference_model = AutoModelForCausalLM.from_pretrained(
 # print(num_patches)
 # print(patch_grid_N)
 
-# load the dpo model
-dpo_model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
-    torch_dtype=torch.float16, # float32 for cpu
-    device_map='auto',
-    trust_remote_code=True)
+# # load the dpo model
+# dpo_model = AutoModelForCausalLM.from_pretrained(
+#     'BAAI/Bunny-v1_0-3B',
+#     torch_dtype=torch.float16, # float32 for cpu
+#     device_map='auto',
+#     trust_remote_code=True)
 
 # load the mdpo model
 mdpo_model = AutoModelForCausalLM.from_pretrained(
@@ -60,15 +60,15 @@ mdpo_model = AutoModelForCausalLM.from_pretrained(
 
 # path of saved checkpoint
 mdpo_checkpoint_path = './checkpoint/mdpo_bunny'
-dpo_checkpoint_path = './checkpoint/dpo_bunny'
+#dpo_checkpoint_path = './checkpoint/dpo_bunny'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
 if use_lora:
-    dpo_model = PeftModel.from_pretrained(
-        dpo_model,
-        dpo_checkpoint_path
-    )
+    # dpo_model = PeftModel.from_pretrained(
+    #     dpo_model,
+    #     dpo_checkpoint_path
+    # )
 
     mdpo_model = PeftModel.from_pretrained(
         mdpo_model,
@@ -76,16 +76,16 @@ if use_lora:
     )
 
     mdpo_model = mdpo_model.merge_and_unload()
-    dpo_model = dpo_model.merge_and_unload()
+    #dpo_model = dpo_model.merge_and_unload()
 
 # load the vision towers
-reference_model.get_vision_tower().load_model()
-dpo_model.get_vision_tower().load_model()
+#reference_model.get_vision_tower().load_model()
+#dpo_model.get_vision_tower().load_model()
 mdpo_model.get_vision_tower().load_model()
 
 # set model to evaluation mode
-reference_model.eval()
-dpo_model.eval()
+#reference_model.eval()
+#dpo_model.eval()
 mdpo_model.eval()
 
 #print(mdpo_model.get_vision_tower().is_loaded)
@@ -175,10 +175,15 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 
     return batch
 
+# user query
+query = "How many traffic lights are there in the image?"
+# image path
+image_path = './data/test/count1.jpg'
+
 # # user query
-# query = "How many traffic lights are there in the image?"
+# query = "What colour are the traffic lights on the left?"
 # # response text
-# response = "There are two traffic lights in the image."
+# response = "They are red colour."
 # # image path
 # image_path = './data/test/count1.jpg'
 
@@ -204,7 +209,7 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # image_path = './data/test/count4.jpg'
 
 # # user query
-# query = "How many chairs are there in the kitchen?"
+# query = "How many chairs are there in the image?"
 # # response text
 # response = "There are four chairs."
 # # image path
@@ -212,6 +217,13 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 
 # # user query
 # query = "How many chairs are there in the image?"
+# # response text
+# response = "There are four chairs."
+# # image path
+# image_path = './data/test/count6.jpg'
+
+# # user query
+# query = "What is the colour of the chairs in the image?"
 # # response text
 # response = "There are four chairs."
 # # image path
@@ -230,13 +242,6 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # response = "There are three traffic signs."
 # # image path
 # image_path = './data/test/count9.jpg'
-
-# user query
-query = "What colour is the traffic light glowing?"
-# response text
-response = "It is red colour."
-# image path
-image_path = './data/test/count9.jpg'
 
 # # user query
 # query = "How many cars are there in the image?"
@@ -273,81 +278,6 @@ image_path = './data/test/count9.jpg'
 # # image path
 # image_path = './data/test/count14.jpg'
 
-# function to calculate the spatial attention map
-def spatial_attention_map(question, answer, path, tokenizer, model):
-    # prompt text with <image> token
-    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
-
-    # get the inputs for the model
-    data = prepare_inputs(prompt, answer, path, tokenizer, model)
-
-    # get the model outputs
-    outputs = model(
-        input_ids=torch.tensor(data["prompt_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["prompt_attention_mask"], dtype=torch.long).unsqueeze(0),
-        images=data["image"],
-        labels=None,
-        use_cache=False,
-        output_attentions=True,
-        output_hidden_states=False,
-        return_dict=True
-    )
-
-    # get the attention scores from the last layer
-    att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
-
-    # index position where the first image token is located
-    image_token_pos = data["prompt_input_ids"].index(-200)
-
-    # extract attention scores from the last prompt token to all the image tokens
-    ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
-
-    # average over attention heads
-    avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
-
-    # # normalize values
-    # avg_attn = avg_attn / avg_attn.sum()
-
-    # reshape to 27 x 27 (no. of patches) to get the spatial attention map
-    spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
-
-    return spatial_attn_map
-
-# function to calculate the relative attention
-def relative_attention_map(question, answer, path, tokenizer, model):
-    # generic query to calculate the relative attention
-    generic_query = "Write a general description of the image."
-
-    attn_map = spatial_attention_map(question, answer, path, tokenizer, model)
-    generic_attn_map = spatial_attention_map(generic_query, answer, path, tokenizer, model)
-
-    # calculate the relative attention map
-    # perform safe division
-    relative_attn_map = np.divide(
-        attn_map,
-        generic_attn_map,
-        out=np.zeros_like(attn_map),
-        where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
-    )
-    # the above division may still cause some overflow errors even if generic attention is not very small
-    # which will lead to the relative attention containing 'inf' values
-    # get positions which contain 'inf' values
-    inf_mask = np.isinf(relative_attn_map)
-    if np.any(inf_mask):
-        # find the maximum finite value
-        finite_values = relative_attn_map[~inf_mask]
-        max_finite = np.max(finite_values)
-
-        # assign that max_finite to every position that was inf
-        relative_attn_map[inf_mask] = max_finite
-
-    # find the maximum value
-    max_valid_value = np.max(relative_attn_map)
-    # in places where the generic is zero or near-zero but actual is non-zero replace with half of maximum value
-    relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value/2
-
-    return relative_attn_map
-
 # function to generate the model's response
 def generate_response(question, path, tokenizer, model):
     # prompt text
@@ -374,43 +304,154 @@ def generate_response(question, path, tokenizer, model):
 
     return response
 
-# reopen the original image and then resize it
-orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
-# crop the upper-left portion of the image
-crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
-orig_image_cropped = orig_image_resized.crop(crop_box)
+# function to calculate the spatial attention map for each answer token
+def spatial_attention_map(question, answer, path, tokenizer, model):
+    # list to store the spatial attention maps
+    sams = []
 
-# generate the relative attention of reference 
-ref_rel_attn = relative_attention_map(query, response, image_path, tokenizer, reference_model)
-# generate the relative attention of dpo 
-dpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, dpo_model)
-# generate the relative attention of mdpo 
-mdpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, mdpo_model)
+    # prompt text with <image> token
+    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
+
+    # get the inputs for the model
+    data = prepare_inputs(prompt, answer, path, tokenizer, model)
+
+    # get the model outputs
+    outputs = model(
+        input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
+        attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long).unsqueeze(0),
+        images=data["image"],
+        labels=None,
+        use_cache=False,
+        output_attentions=True,
+        output_hidden_states=False,
+        return_dict=True
+    )
+
+    # get the attention scores from the last layer
+    att_scores = outputs.attentions[-3].squeeze() # (heads, 781, 781)
+
+    # index position where the first image token is located
+    image_token_pos = data["response_input_ids"].index(-200)
+
+    # index position where the first answer token is located
+    ans_token_pos = len(data["prompt_input_ids"])+728
+
+    for i in range(ans_token_pos, att_scores.shape[1]):
+        # extract attention scores when predicting i-th answer token
+        ans_img_attn_scores = att_scores[:, i-1, image_token_pos:image_token_pos+729] # (heads, 729)
+
+        # average over attention heads
+        avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
+
+        # normalize values
+        avg_attn = avg_attn / avg_attn.sum()
+
+        # reshape to 27 x 27 (no. of patches) to get the spatial attention map
+        spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
+
+        sams.append(spatial_attn_map)
+
+    return sams
+
 # generate mdpo's response
-mdpo_answer = generate_response(query, image_path, tokenizer, mdpo_model)
+mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
+
+# generate the spatial attention map of mdpo 
+mdpo_spt_attn_maps = spatial_attention_map(query, mdpo_response, image_path, tokenizer, mdpo_model)
+
+cols = 4
+rows = (len(mdpo_spt_attn_maps)+cols-1) // cols
 
 # figure with two columns for the original image and the spatial attention map
-fig, axes = plt.subplots(2, 2, figsize=(8,6))
-#axes = axes.flatten()
+fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
+axes = axes.flatten()
 
 # plot the original image
-axes[0,0].imshow(orig_image_cropped)
-axes[0,0].set_title("Original Image")
-axes[0,0].axis('off')
+for i in range(len(mdpo_spt_attn_maps)):
+    axes[i].imshow(mdpo_spt_attn_maps[i], cmap='viridis')
+    axes[i].set_title(f"Token: {i+1}")
+    axes[i].axis('off')
 
-axes[0,1].imshow(ref_rel_attn, cmap='viridis')
-axes[0,1].set_title(f"Reference Relative Attention Map")
-axes[0,1].axis('off')
+for i in range(len(mdpo_spt_attn_maps), len(axes)):
+    axes[i].axis('off')
 
-axes[1,0].imshow(dpo_rel_attn, cmap='viridis')
-axes[1,0].set_title(f"DPO Relative Attention Map")
-axes[1,0].axis('off')
-
-axes[1,1].imshow(mdpo_rel_attn, cmap='viridis')
-axes[1,1].set_title(f"mDPO Relative Attention Map")
-axes[1,1].axis('off')
-
-plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_answer}", fontsize=10)
+plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_response}", fontsize=10)
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
+
+# # function to calculate the relative attention
+# def relative_attention_map(question, answer, path, tokenizer, model):
+#     # generic query to calculate the relative attention
+#     generic_query = "Write a general description of the image."
+
+#     attn_map = spatial_attention_map(question, answer, path, tokenizer, model)
+#     generic_attn_map = spatial_attention_map(generic_query, answer, path, tokenizer, model)
+
+#     # calculate the relative attention map
+#     # perform safe division
+#     relative_attn_map = np.divide(
+#         attn_map,
+#         generic_attn_map,
+#         out=np.zeros_like(attn_map),
+#         where=generic_attn_map > 1e-10  # avoid divide-by-zero or near-zero
+#     )
+#     # the above division may still cause some overflow errors even if generic attention is not very small
+#     # which will lead to the relative attention containing 'inf' values
+#     # get positions which contain 'inf' values
+#     inf_mask = np.isinf(relative_attn_map)
+#     if np.any(inf_mask):
+#         # find the maximum finite value
+#         finite_values = relative_attn_map[~inf_mask]
+#         max_finite = np.max(finite_values)
+
+#         # assign that max_finite to every position that was inf
+#         relative_attn_map[inf_mask] = max_finite
+
+#     # find the maximum value
+#     max_valid_value = np.max(relative_attn_map)
+#     # in places where the generic is zero or near-zero but actual is non-zero replace with half of maximum value
+#     relative_attn_map[(generic_attn_map <= 1e-10) & (attn_map > 1e-10)] = max_valid_value/2
+
+#     return relative_attn_map
+
+
+
+# # reopen the original image and then resize it
+# orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
+# # crop the upper-left portion of the image
+# crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
+# orig_image_cropped = orig_image_resized.crop(crop_box)
+
+# # generate the relative attention of reference 
+# ref_rel_attn = relative_attention_map(query, response, image_path, tokenizer, reference_model)
+# # generate the relative attention of dpo 
+# dpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, dpo_model)
+# # generate the relative attention of mdpo 
+# mdpo_rel_attn = relative_attention_map(query, response, image_path, tokenizer, mdpo_model)
+
+# # figure with two columns for the original image and the spatial attention map
+# fig, axes = plt.subplots(2, 2, figsize=(8,6))
+# #axes = axes.flatten()
+
+# # plot the original image
+# axes[0,0].imshow(orig_image_cropped)
+# axes[0,0].set_title("Original Image")
+# axes[0,0].axis('off')
+
+# axes[0,1].imshow(ref_rel_attn, cmap='viridis')
+# axes[0,1].set_title(f"Reference Relative Attention Map")
+# axes[0,1].axis('off')
+
+# axes[1,0].imshow(dpo_rel_attn, cmap='viridis')
+# axes[1,0].set_title(f"DPO Relative Attention Map")
+# axes[1,0].axis('off')
+
+# axes[1,1].imshow(mdpo_rel_attn, cmap='viridis')
+# axes[1,1].set_title(f"mDPO Relative Attention Map")
+# axes[1,1].axis('off')
+
+# plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_answer}", fontsize=10)
+# plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+# plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# plt.close()
