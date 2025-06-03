@@ -302,6 +302,48 @@ def generate_response(question, path, tokenizer, model):
 
     return response
 
+# function to calculate the generic attention map for a generic query
+def generic_attention_map(answer, path, tokenizer, model):
+    # generic query
+    generic_query = "Write a general description of the image"
+
+    # prompt text with <image> token
+    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{generic_query} ASSISTANT:"
+
+    # get the inputs for the model
+    data = prepare_inputs(prompt, answer, path, tokenizer, model)
+
+    # get the model outputs
+    outputs = model(
+        input_ids=torch.tensor(data["prompt_input_ids"], dtype=torch.long, device=device).unsqueeze(0),  # add batch dimension
+        attention_mask=torch.tensor(data["prompt_attention_mask"], dtype=torch.long, device=device).unsqueeze(0),
+        images=data["image"].to(device),
+        labels=None,
+        use_cache=False,
+        output_attentions=True,
+        output_hidden_states=False,
+        return_dict=True
+    )
+
+    # get the attention scores from the last layer
+    att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
+
+    assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
+
+    # index position where the first image token is located
+    image_token_pos = data["prompt_input_ids"].index(-200)
+
+    # extract attention scores when predicting the first answer token using the lasp prompt token
+    ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
+
+    # average over attention heads
+    avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
+
+    # reshape to 27 x 27 (no. of patches) to get the spatial attention map
+    spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
+
+    return spatial_attn_map
+
 # function to calculate the spatial attention map for each answer token
 def spatial_attention_map(question, answer, path, tokenizer, model):
     # list to store the spatial attention maps
@@ -315,9 +357,9 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
 
     # get the model outputs
     outputs = model(
-        input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long).unsqueeze(0),
-        images=data["image"],
+        input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long, device=device).unsqueeze(0),  # add batch dimension
+        attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long, device=device).unsqueeze(0),
+        images=data["image"].to(device),
         labels=None,
         use_cache=False,
         output_attentions=True,
@@ -343,8 +385,8 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
         # average over attention heads
         avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
 
-        # normalize values
-        avg_attn = avg_attn / avg_attn.sum()
+        # # normalize values
+        # avg_attn = avg_attn / avg_attn.sum()
 
         # reshape to 27 x 27 (no. of patches) to get the spatial attention map
         spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
@@ -365,8 +407,11 @@ orig_image_cropped = orig_image_resized.crop(crop_box)
 # generate mdpo's response
 mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
 
-# generate the spatial attention map of mdpo 
+# generate spatial attention maps of mdpo for every answer token
 mdpo_spt_attn_maps = spatial_attention_map(query, mdpo_response, image_path, tokenizer, mdpo_model)
+
+# generate generic attention map using the generic query
+mdpo_gen_attn_map = generic_attention_map(mdpo_response, image_path, tokenizer, mdpo_model)
 
 cols = 4
 rows = (len(mdpo_spt_attn_maps)+cols) // cols
@@ -380,12 +425,23 @@ axes[0].imshow(orig_image_cropped)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
-# plot the original image
+# plot the relative attention maps
 for i in range(len(mdpo_spt_attn_maps)):
-    axes[i+1].imshow(mdpo_spt_attn_maps[i][0], cmap='viridis')
+    # calculate the relative attention map
+    rel_attn_map = np.zeros_like(mdpo_spt_attn_maps[i][0])
+    # divide the actual attention map by generic attention map
+    np.divide(
+        mdpo_spt_attn_maps[i][0],
+        mdpo_gen_attn_map,
+        out=rel_attn_map,
+        where=(mdpo_gen_attn_map > 1e-10)
+    )
+
+    axes[i+1].imshow(rel_attn_map, cmap='viridis')
     axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
     axes[i+1].axis('off')
 
+# turn off remaining plots
 for i in range(len(mdpo_spt_attn_maps)+1, len(axes)):
     axes[i].axis('off')
 
