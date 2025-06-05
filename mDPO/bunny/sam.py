@@ -457,27 +457,27 @@ for i in range(len(mdpo_spt_attn_maps)):
         where=(mdpo_gen_attn_map > 1e-10)
     )
 
-    # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
-    # build the regression model using the attention maps
-    regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
+    # # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
+    # # build the regression model using the attention maps
+    # regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
 
-    assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
+    # assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
 
-    # get dimensions of relative attention map
-    height, width = rel_attn_map.shape
+    # # get dimensions of relative attention map
+    # height, width = rel_attn_map.shape
 
-    for j in range(height):
-        for k in range(width):
-            gen = mdpo_gen_attn_map[j,k]
-            act = mdpo_spt_attn_map[j,k]
+    # for j in range(height):
+    #     for k in range(width):
+    #         gen = mdpo_gen_attn_map[j,k]
+    #         act = mdpo_spt_attn_map[j,k]
 
-            # if generic is zero and actual is non-zero use the regression model to predict the values
-            if gen <= 1e-10 and act > 0:
-                x = np.array([[gen, act]])
-                pred = regressor.predict(x)[0]
-                rel_attn_map[j,k] = pred
+    #         # if generic is zero and actual is non-zero use the regression model to predict the values
+    #         if gen <= 1e-10 and act > 0:
+    #             x = np.array([[gen, act]])
+    #             pred = regressor.predict(x)[0]
+    #             rel_attn_map[j,k] = pred
 
-    # # 2. fill those entries when generic is zero and actual is non-zero with half of maximu relative attention
+    # # 2. fill those entries when generic is zero and actual is non-zero with half of maximum relative attention
     # # find the maximum relative attention
     # max_rel_attn = np.max(rel_attn_map)
 
@@ -485,6 +485,18 @@ for i in range(len(mdpo_spt_attn_maps)):
     # mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
 
     # rel_attn_map[mask] = max_rel_attn/2
+
+    # 3. fill those entries when generic is zero and actual is non-zero with actual attention divided by minimum such attention and then multiply with maximum relative attention
+    # find the maximum relative attention
+    max_rel_attn = np.max(rel_attn_map)
+
+    # find those cases when generic is zero but actual attention is non-zero
+    mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
+
+    # find the minimum actual attention
+    min_act_attn = np.min(mdpo_spt_attn_map[mask])
+
+    rel_attn_map[mask] = (mdpo_spt_attn_map[mask]/min_act_attn)*max_rel_attn
 
     axes[i+1].imshow(rel_attn_map, cmap='viridis')
     axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
