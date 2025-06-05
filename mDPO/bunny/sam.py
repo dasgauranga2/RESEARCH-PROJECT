@@ -9,7 +9,7 @@ from torchvision.transforms import v2
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
-import math
+from sklearn.neighbors import KNeighborsRegressor
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -187,31 +187,25 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # # image path
 # image_path = './data/test/count1.jpg'
 
-# user query
-query = "How many bicycles are there in the image?"
-# image path
-image_path = './data/test/count2.jpg'
+# # user query
+# query = "How many bicycles are there in the image?"
+# # image path
+# image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
-# # response text
-# response = "There are five zebras in the image."
 # # image path
 # image_path = './data/test/count3.jpg'
 
 # # user query
 # query = "How many players are there in the image?"
-# # response text
-# response = "There are three players."
 # # image path
 # image_path = './data/test/count4.jpg'
 
-# # user query
-# query = "How many chairs are there in the image?"
-# # response text
-# response = "There are four chairs."
-# # image path
-# image_path = './data/test/count5.jpg'
+# user query
+query = "How many chairs are there in the image?"
+# image path
+image_path = './data/test/count5.jpg'
 
 # # user query
 # query = "How many chairs are there in the image?"
@@ -305,7 +299,7 @@ def generate_response(question, path, tokenizer, model):
 # function to calculate the generic attention map for a generic query
 def generic_attention_map(answer, path, tokenizer, model):
     # generic query
-    generic_query = "Write a general description of the image"
+    generic_query = "Write a general description of the image."
 
     # prompt text with <image> token
     prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{generic_query} ASSISTANT:"
@@ -333,7 +327,7 @@ def generic_attention_map(answer, path, tokenizer, model):
     # index position where the first image token is located
     image_token_pos = data["prompt_input_ids"].index(-200)
 
-    # extract attention scores when predicting the first answer token using the lasp prompt token
+    # extract attention scores when predicting the first answer token using the last prompt token
     ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
     # average over attention heads
@@ -398,6 +392,30 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
 
     return all_sam
 
+# function that will build a model to predict entries
+# where generic is zero and actual is non-zero
+def predict_inf(rel_attn, spt_attn, gen_attn):
+    # flatten the attention maps
+    rel_attn = rel_attn.flatten()
+    spt_attn = spt_attn.flatten()
+    gen_attn = gen_attn.flatten()
+
+    # get those entries when generic is greater than zero
+    mask = gen_attn > 1e-10
+
+    # build the dataset
+    x = np.stack([gen_attn[mask], spt_attn[mask]], axis=1)
+    y = rel_attn[mask]
+
+    # MLP regression model
+    regressor = KNeighborsRegressor(
+        n_neighbors=5,
+        weights='uniform'
+    )
+    regressor.fit(x, y)
+
+    return regressor
+
 # reopen the original image and then resize it
 orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
 # crop the upper-left portion of the image
@@ -427,15 +445,46 @@ axes[0].axis('off')
 
 # plot the relative attention maps
 for i in range(len(mdpo_spt_attn_maps)):
+    # get the spatial attention map for the answer token
+    mdpo_spt_attn_map = mdpo_spt_attn_maps[i][0]
     # calculate the relative attention map
-    rel_attn_map = np.zeros_like(mdpo_spt_attn_maps[i][0])
+    rel_attn_map = np.zeros_like(mdpo_spt_attn_map)
     # divide the actual attention map by generic attention map
     np.divide(
-        mdpo_spt_attn_maps[i][0],
+        mdpo_spt_attn_map,
         mdpo_gen_attn_map,
         out=rel_attn_map,
         where=(mdpo_gen_attn_map > 1e-10)
     )
+
+    # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
+    # build the regression model using the attention maps
+    regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
+
+    assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
+
+    # get dimensions of relative attention map
+    height, width = rel_attn_map.shape
+
+    for j in range(height):
+        for k in range(width):
+            gen = mdpo_gen_attn_map[j,k]
+            act = mdpo_spt_attn_map[j,k]
+
+            # if generic is zero and actual is non-zero use the regression model to predict the values
+            if gen <= 1e-10 and act > 0:
+                x = np.array([[gen, act]])
+                pred = regressor.predict(x)[0]
+                rel_attn_map[j,k] = pred
+
+    # # 2. fill those entries when generic is zero and actual is non-zero with half of maximu relative attention
+    # # find the maximum relative attention
+    # max_rel_attn = np.max(rel_attn_map)
+
+    # # find those cases when generic is zero but actual attention is non-zero
+    # mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
+
+    # rel_attn_map[mask] = max_rel_attn/2
 
     axes[i+1].imshow(rel_attn_map, cmap='viridis')
     axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
