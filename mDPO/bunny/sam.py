@@ -182,8 +182,6 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 
 # # user query
 # query = "What colour are the traffic lights on the left?"
-# # response text
-# response = "They are red colour."
 # # image path
 # image_path = './data/test/count1.jpg'
 
@@ -202,15 +200,13 @@ def prepare_inputs(prompt, response, img_path, tokenizer, model):
 # # image path
 # image_path = './data/test/count4.jpg'
 
-# user query
-query = "How many chairs are there in the image?"
-# image path
-image_path = './data/test/count5.jpg'
+# # user query
+# query = "How many chairs are there in the image?"
+# # image path
+# image_path = './data/test/count5.jpg'
 
 # # user query
 # query = "How many chairs are there in the image?"
-# # response text
-# response = "There are four chairs."
 # # image path
 # image_path = './data/test/count6.jpg'
 
@@ -230,8 +226,6 @@ image_path = './data/test/count5.jpg'
 
 # # user query
 # query = "How many traffic signs in the image?"
-# # response text
-# response = "There are three traffic signs."
 # # image path
 # image_path = './data/test/count9.jpg'
 
@@ -270,6 +264,17 @@ image_path = './data/test/count5.jpg'
 # # image path
 # image_path = './data/test/count14.jpg'
 
+queries = [
+    ("How many traffic lights are there in the image?", './data/test/count1.jpg'),
+    ("What colour are the traffic lights on the left?", './data/test/count1.jpg'),
+    ("How many bicycles are there in the image?", './data/test/count2.jpg'),
+    ("How many zebras are there in the image?", './data/test/count3.jpg'),
+    ("How many players are there in the image?", './data/test/count4.jpg'),
+    ("How many chairs are there in the image?", './data/test/count5.jpg'),
+    ("How many chairs are there in the image?", './data/test/count6.jpg'),
+    ("How many traffic signs in the image?", './data/test/count9.jpg')
+]
+
 # function to generate the model's response
 def generate_response(question, path, tokenizer, model):
     # prompt text
@@ -297,7 +302,7 @@ def generate_response(question, path, tokenizer, model):
     return response
 
 # function to calculate the generic attention map for a generic query
-def generic_attention_map(answer, path, tokenizer, model):
+def generic_attention_map(answer, path, tokenizer, model, layer_index = -1):
     # generic query
     generic_query = "Write a general description of the image."
 
@@ -320,7 +325,7 @@ def generic_attention_map(answer, path, tokenizer, model):
     )
 
     # get the attention scores from the last layer
-    att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
+    att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
 
     assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
 
@@ -339,7 +344,7 @@ def generic_attention_map(answer, path, tokenizer, model):
     return spatial_attn_map
 
 # function to calculate the spatial attention map for each answer token
-def spatial_attention_map(question, answer, path, tokenizer, model):
+def spatial_attention_map(question, answer, path, tokenizer, model, layer_index = -1):
     # list to store the spatial attention maps
     all_sam = []
 
@@ -362,7 +367,7 @@ def spatial_attention_map(question, answer, path, tokenizer, model):
     )
 
     # get the attention scores from the last layer
-    att_scores = outputs.attentions[-1].squeeze() # (heads, 781, 781)
+    att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
 
     assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
 
@@ -416,100 +421,115 @@ def predict_inf(rel_attn, spt_attn, gen_attn):
 
     return regressor
 
-# reopen the original image and then resize it
-orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
-# crop the upper-left portion of the image
-crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
-orig_image_cropped = orig_image_resized.crop(crop_box)
+for qi, (query, image_path) in enumerate(queries):
 
-# generate mdpo's response
-mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
+    # reopen the original image and then resize it
+    orig_image_resized = Image.open(image_path).convert('RGB').resize((384, 384))
+    # crop the upper-left portion of the image
+    crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
+    orig_image_cropped = orig_image_resized.crop(crop_box)
 
-# generate spatial attention maps of mdpo for every answer token
-mdpo_spt_attn_maps = spatial_attention_map(query, mdpo_response, image_path, tokenizer, mdpo_model)
+    # generate mdpo's response
+    mdpo_response = generate_response(query, image_path, tokenizer, mdpo_model)
 
-# generate generic attention map using the generic query
-mdpo_gen_attn_map = generic_attention_map(mdpo_response, image_path, tokenizer, mdpo_model)
+    # generate spatial attention maps of mdpo for every answer token
+    mdpo_spt_attn_maps = spatial_attention_map(query, mdpo_response, image_path, tokenizer, mdpo_model)
 
-cols = 4
-rows = (len(mdpo_spt_attn_maps)+cols) // cols
+    # generate generic attention map using the generic query
+    mdpo_gen_attn_map = generic_attention_map(mdpo_response, image_path, tokenizer, mdpo_model)
 
-# figure with two columns for the original image and the spatial attention map
-fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
-axes = axes.flatten()
+    cols = 4
+    rows = (len(mdpo_spt_attn_maps)+cols) // cols
 
-# plot the original image
-axes[0].imshow(orig_image_cropped)
-axes[0].set_title("Original Image")
-axes[0].axis('off')
+    # figure for the original image and the attention maps
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
+    axes = axes.flatten()
 
-# plot the relative attention maps
-for i in range(len(mdpo_spt_attn_maps)):
-    # get the spatial attention map for the answer token
-    mdpo_spt_attn_map = mdpo_spt_attn_maps[i][0]
-    # calculate the relative attention map
-    rel_attn_map = np.zeros_like(mdpo_spt_attn_map)
-    # divide the actual attention map by generic attention map
-    np.divide(
-        mdpo_spt_attn_map,
-        mdpo_gen_attn_map,
-        out=rel_attn_map,
-        where=(mdpo_gen_attn_map > 1e-10)
-    )
+    # plot the original image
+    axes[0].imshow(orig_image_cropped)
+    axes[0].set_title("Original Image")
+    axes[0].axis('off')
 
-    # # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
-    # # build the regression model using the attention maps
-    # regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
+    # plot the relative attention maps
+    for i in range(len(mdpo_spt_attn_maps)):
+        # get the spatial attention map for the answer token
+        mdpo_spt_attn_map = mdpo_spt_attn_maps[i][0]
+        # calculate the relative attention map
+        rel_attn_map = np.zeros_like(mdpo_spt_attn_map)
+        # divide the actual attention map for the answer token by generic attention map
+        np.divide(
+            mdpo_spt_attn_map,
+            mdpo_gen_attn_map,
+            out=rel_attn_map,
+            where=(mdpo_gen_attn_map > 1e-10) # prevent divide-by-zero error
+        )
+        # there may still be division overflow problems if denominator is too small and numerator is too large
+        # find places in relative attention map with finite values
+        finite_mask = np.isfinite(rel_attn_map)
+        # find the finite maximum value
+        finite_max = rel_attn_map[finite_mask].max()
+        # set infinite values to finite maximum value
+        rel_attn_map[np.isinf(rel_attn_map)] = finite_max
 
-    # assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
+        # ###################################################################################################################
+        # # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
+        # # build the regression model using the attention maps
+        # regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
 
-    # # get dimensions of relative attention map
-    # height, width = rel_attn_map.shape
+        # assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
 
-    # for j in range(height):
-    #     for k in range(width):
-    #         gen = mdpo_gen_attn_map[j,k]
-    #         act = mdpo_spt_attn_map[j,k]
+        # # get dimensions of relative attention map
+        # height, width = rel_attn_map.shape
 
-    #         # if generic is zero and actual is non-zero use the regression model to predict the values
-    #         if gen <= 1e-10 and act > 0:
-    #             x = np.array([[gen, act]])
-    #             pred = regressor.predict(x)[0]
-    #             rel_attn_map[j,k] = pred
+        # for j in range(height):
+        #     for k in range(width):
+        #         gen = mdpo_gen_attn_map[j,k]
+        #         act = mdpo_spt_attn_map[j,k]
 
-    # # 2. fill those entries when generic is zero and actual is non-zero with half of maximum relative attention
-    # # find the maximum relative attention
-    # max_rel_attn = np.max(rel_attn_map)
+        #         # if generic is zero and actual is non-zero use the regression model to predict the values
+        #         if gen <= 1e-10 and act > 0:
+        #             x = np.array([[gen, act]])
+        #             pred = regressor.predict(x)[0]
+        #             rel_attn_map[j,k] = pred
+        # ###################################################################################################################
 
-    # # find those cases when generic is zero but actual attention is non-zero
-    # mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
+        # ###################################################################################################################
+        # # 2. fill those entries when generic is zero and actual is non-zero with half of maximum relative attention
+        # # find the maximum relative attention
+        # max_rel_attn = np.max(rel_attn_map)
 
-    # rel_attn_map[mask] = max_rel_attn/2
+        # # find those cases when generic is zero but actual attention is non-zero
+        # mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
 
-    # 3. fill those entries when generic is zero and actual is non-zero with actual attention divided by minimum such attention and then multiply with maximum relative attention
-    # find the maximum relative attention
-    max_rel_attn = np.max(rel_attn_map)
+        # rel_attn_map[mask] = max_rel_attn/2
+        # ###################################################################################################################
 
-    # find those cases when generic is zero but actual attention is non-zero
-    mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
+        # ###################################################################################################################
+        # # 3. fill those entries when generic is zero and actual is non-zero with actual attention divided by minimum such attention and then multiply with maximum relative attention
+        # # find the maximum relative attention
+        # max_rel_attn = np.max(rel_attn_map)
 
-    # find the minimum actual attention
-    min_act_attn = np.min(mdpo_spt_attn_map[mask])
+        # # find those cases when generic is zero but actual attention is non-zero
+        # mask = (mdpo_gen_attn_map <= 1e-10) & (mdpo_spt_attn_map > 0)
 
-    rel_attn_map[mask] = (mdpo_spt_attn_map[mask]/min_act_attn)*max_rel_attn
+        # # find the minimum actual attention
+        # min_act_attn = np.min(mdpo_spt_attn_map[mask])
 
-    axes[i+1].imshow(rel_attn_map, cmap='viridis')
-    axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
-    axes[i+1].axis('off')
+        # rel_attn_map[mask] = (mdpo_spt_attn_map[mask]/min_act_attn)*max_rel_attn
+        # ###################################################################################################################
 
-# turn off remaining plots
-for i in range(len(mdpo_spt_attn_maps)+1, len(axes)):
-    axes[i].axis('off')
+        axes[i+1].imshow(rel_attn_map, cmap='viridis')
+        axes[i+1].set_title(f"Token: {mdpo_spt_attn_maps[i][1]}")
+        axes[i+1].axis('off')
 
-plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_response}", fontsize=10)
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.savefig('./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+    # turn off remaining plots
+    for i in range(len(mdpo_spt_attn_maps)+1, len(axes)):
+        axes[i].axis('off')
+
+    plt.suptitle(f"Query: {query}\nmDPO Answer: {mdpo_response}", fontsize=10)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(f'./results/spatial_attn_map{qi+1}.png', bbox_inches='tight', pad_inches=0, dpi=300)
+    plt.close()
 
 # # function to calculate the relative attention
 # def relative_attention_map(question, answer, path, tokenizer, model):
