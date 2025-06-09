@@ -21,25 +21,28 @@ def corrupt_image(image):
     return image
 
 # function to apply elastic warping on an image
-def elastic_transform_pil(pil_img, alpha=1000, sigma=20):
-    # Convert to numpy
-    image = np.array(pil_img)
+def elastic_transform(image, alpha=1000, sigma=20):
+    image_np = image.squeeze(0).permute(1, 2, 0).cpu().numpy()  # shape: (H, W, C)
+    H, W = image_np.shape[:2]
 
     # Generate displacement fields
     random_state = np.random.RandomState(None)
-    dx = ndimage.gaussian_filter((random_state.rand(*image.shape[:2]) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-    dy = ndimage.gaussian_filter((random_state.rand(*image.shape[:2]) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dx = ndimage.gaussian_filter((random_state.rand(H, W) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dy = ndimage.gaussian_filter((random_state.rand(H, W) * 2 - 1), sigma, mode="constant", cval=0) * alpha
 
     # Create meshgrid
-    x, y = np.meshgrid(np.arange(image.shape[1]), np.arange(image.shape[0]))
+    x, y = np.meshgrid(np.arange(W), np.arange(H))
     indices = np.reshape(y + dy, (-1, 1)), np.reshape(x + dx, (-1, 1))
 
-    # Map image through displacement
-    distorted = np.zeros_like(image)
-    for i in range(image.shape[2]):
-        distorted[..., i] = ndimage.map_coordinates(image[..., i], indices, order=1, mode='reflect').reshape(image.shape[:2])
+    # Apply displacement to each channel
+    distorted = np.zeros_like(image_np)
+    for i in range(image_np.shape[2]):
+        distorted[..., i] = ndimage.map_coordinates(image_np[..., i], indices, order=1, mode='reflect').reshape(H, W)
 
-    return Image.fromarray(distorted)
+    # Convert back to torch tensor
+    distorted_tensor = torch.from_numpy(distorted).permute(2, 0, 1).unsqueeze(0).float()
+
+    return distorted_tensor
 
 # object to convert a PIL image into a Pytorch tensor
 to_tensor = transforms.ToTensor()
@@ -59,13 +62,15 @@ image = Image.open('./data/test3.png').convert("RGB")
 # convert the image to a tensor
 image_tensor = to_tensor(image)
 
-# apply image corruption
-corrupted_image_tensor = corrupt_image(image_tensor)
-
+# apply mDPO image corruption
+mdpo_corrupted_image_tensor = corrupt_image(image_tensor)
 # convert image tensor back back to PIL Image
-mdpo_corrupted_image = to_pil(corrupted_image_tensor.squeeze())
+mdpo_corrupted_image = to_pil(mdpo_corrupted_image_tensor.squeeze())
 
-custom_corrupted_image = elastic_transform_pil(image)
+# apply custom image corruption
+custom_corrupted_image_tensor = elastic_transform(image_tensor)
+# convert image tensor back back to PIL Image
+custom_corrupted_image = to_pil(custom_corrupted_image_tensor.squeeze())
 
 # figure for the original image and the attention maps
 fig, axes = plt.subplots(1, 3, figsize=(8, 5))
