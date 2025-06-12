@@ -5,7 +5,7 @@ from PIL import Image
 import warnings
 from peft import PeftModel
 from bunny_utils.util.mm_utils import tokenizer_image_token
-from torchvision.transforms import v2
+from torchvision.transforms import v2, ToTensor, ToPILImage
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
@@ -384,6 +384,15 @@ def spatial_attention_map(question, answer, img_tensor, tokenizer, model, layer_
 
     return all_sam
 
+# function to apply image corruption
+def corrupt_image(pil_image):
+    to_tensor = ToTensor()
+    to_pil = ToPILImage()
+    image_tensor = to_tensor(pil_image)
+    corrupted_image_tensor = crop_image(image_tensor)
+
+    return to_pil(corrupted_image_tensor.squeeze())
+
 # function that will build a model to predict entries
 # where generic is zero and actual is non-zero
 def predict_inf(rel_attn, spt_attn, gen_attn):
@@ -412,7 +421,8 @@ def predict_inf(rel_attn, spt_attn, gen_attn):
 layer_index = -1
 
 # reopen the original image
-orig_image = Image.open(image_path)
+#orig_image = Image.open(image_path)
+orig_image = corrupt_image(Image.open(image_path))
 # process the image into a tensor
 image_tensor = model.process_images([orig_image], model.config).to(dtype=model.dtype)
 # resize the image
