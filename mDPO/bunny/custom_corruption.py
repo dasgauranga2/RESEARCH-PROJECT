@@ -15,6 +15,7 @@ from scipy import ndimage
 import json
 import matplotlib.pyplot as plt
 from skimage.transform import PiecewiseAffineTransform, warp
+from io import BytesIO
 
 # function to apply the mDPO image corruption
 def corrupt_image(image):
@@ -23,7 +24,10 @@ def corrupt_image(image):
     return image
 
 # function to apply elastic warping on an image
-def elastic_transform(image, alpha=1000, sigma=20):
+# alpha: magnitude of distortion
+# this controls how far the pixels are moved from their original positions
+# sigma: smoothness of distortion
+def elastic_transform(image, alpha=500, sigma=20):
     image_np = image.squeeze(0).permute(1, 2, 0).cpu().numpy()  # shape: (H, W, C)
     H, W = image_np.shape[:2]
 
@@ -114,9 +118,6 @@ to_pil = transforms.ToPILImage()
 # open the image
 image = Image.open('./data/test3.png').convert("RGB")
 
-# # get image dimensions
-# width, height = image.size
-
 # convert the image to a tensor
 image_tensor = to_tensor(image)
 
@@ -125,16 +126,8 @@ mdpo_corrupted_image_tensor = corrupt_image(image_tensor)
 # convert image tensor back back to PIL Image
 mdpo_corrupted_image = to_pil(mdpo_corrupted_image_tensor.squeeze())
 
-# apply custom image corruption
-#custom_corrupted_image_tensor = elastic_transform(image_tensor)
-#custom_corrupted_image_tensor = shear_image(image_tensor)
-#custom_corrupted_image_tensor = grid_distortion(image_tensor)
-custom_corrupted_image_tensor = shuffle_color_channels(image_tensor)
-# convert image tensor back back to PIL Image
-custom_corrupted_image = to_pil(custom_corrupted_image_tensor.squeeze())
-
 # figure for the original image and the attention maps
-fig, axes = plt.subplots(1, 3, figsize=(8, 5))
+fig, axes = plt.subplots(3, 2, figsize=(8, 10))
 axes = axes.flatten()
 
 # plot the original image
@@ -147,10 +140,29 @@ axes[1].imshow(mdpo_corrupted_image)
 axes[1].set_title("mDPO Corrupted Image")
 axes[1].axis('off')
 
-# plot the custom corrupted image
-axes[2].imshow(custom_corrupted_image)
-axes[2].set_title("Custom Corrupted Image")
-axes[2].axis('off')
+# elastic warping parameters 
+# tuple of alpha, sigma pairs
+params = [(500, 10), (500,20), (1000,10), (1000,20)]
+
+# index to track which plot be used
+i = 2
+
+for param in params:
+    # apply custom image corruption with different parameters
+    custom_corrupted_image_tensor = elastic_transform(image_tensor, param[0], param[1])
+    #custom_corrupted_image_tensor = shear_image(image_tensor)
+    #custom_corrupted_image_tensor = grid_distortion(image_tensor)
+    #custom_corrupted_image_tensor = shuffle_color_channels(image_tensor)
+    
+    # convert image tensor back back to PIL Image
+    custom_corrupted_image = to_pil(custom_corrupted_image_tensor.squeeze())
+
+    # plot the custom corrupted image
+    axes[i].imshow(custom_corrupted_image)
+    axes[i].set_title(f"Alpha {param[0]} Sigma {param[1]}")
+    axes[i].axis('off')
+
+    i += 1
 
 # save the images
 plt.savefig(f'./results/image_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
