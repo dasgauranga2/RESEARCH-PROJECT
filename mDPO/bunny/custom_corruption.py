@@ -2,7 +2,7 @@ import torch
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
-import warnings
+import random
 from peft import PeftModel
 from bunny_utils.util.mm_utils import tokenizer_image_token
 from torchvision.transforms import v2
@@ -126,7 +126,7 @@ mdpo_corrupted_image_tensor = corrupt_image(image_tensor)
 # convert image tensor back back to PIL Image
 mdpo_corrupted_image = to_pil(mdpo_corrupted_image_tensor.squeeze())
 
-# figure for the original image and the attention maps
+# figure for the original image and the corrupted images
 fig, axes = plt.subplots(3, 2, figsize=(8, 10))
 axes = axes.flatten()
 
@@ -141,8 +141,15 @@ axes[1].set_title("mDPO Corrupted Image")
 axes[1].axis('off')
 
 # elastic warping parameters 
-# tuple of alpha, sigma pairs
-params = [(500, 10), (500,20), (1000,10), (1000,20)]
+params = []
+# generate the elastic warping parameters randomly
+for _ in range(4):
+    # generate alpha randomly
+    alpha = random.uniform(100, 500)
+    # generate sigma randomly
+    sigma = random.uniform(10, 20)
+
+    params.append((alpha, sigma))
 
 # index to track which plot be used
 i = 2
@@ -159,7 +166,7 @@ for param in params:
 
     # plot the custom corrupted image
     axes[i].imshow(custom_corrupted_image)
-    axes[i].set_title(f"Alpha {param[0]} Sigma {param[1]}")
+    axes[i].set_title(f"Alpha {int(param[0])} Sigma {int(param[1])}")
     axes[i].axis('off')
 
     i += 1
