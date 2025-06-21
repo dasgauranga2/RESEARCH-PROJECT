@@ -42,63 +42,84 @@ def elastic_transform(image, mask, alpha=600, sigma=20):
     
     return result
 
-# object to convert a PIL image into a Pytorch tensor
-to_tensor = transforms.ToTensor()
+# function to perform object detection on an image
+# and return a binary mask which specifies the region
+# where an object is detected
+def object_detection(model, weights, image_tensors):
+    # initialize the preprocessor
+    preprocess = weights.transforms()
+
+    # apply preprocessing to the image
+    batch = [preprocess(image_tensor) for image_tensor in image_tensors]
+
+    # get the model predictions
+    predictions = model(batch)
+
+    # all object bounding box masks
+    all_masks = []
+
+    for i in range(len(image_tensors)):
+        # get the image dimensions
+        H, W = image_tensors[i].shape[1:]
+
+        # create a binary mask that determines the region of detected object
+        mask = torch.zeros((H, W), dtype=torch.float32)
+        for box in predictions[i]['boxes']:
+            x1, y1, x2, y2 = box.int()
+            mask[y1:y2, x1:x2] = 1
+
+        all_masks.append(mask)
+
+    return all_masks
+
 # object to convert a Pytorch tensor into a PIL image
 to_pil = transforms.ToPILImage()
+
+# object to convert a PIL image into a Pytorch tensor
+to_tensor = transforms.ToTensor()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# initialize the object detection model
+frcnn_weights = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
+frcnn_model = fasterrcnn_resnet50_fpn_v2(weights=frcnn_weights, box_score_thresh=0.9).to(device)
+frcnn_model.eval()
 
 # # open the training data json file
 # with open('./data/vlfeedback_llava_10k.json', 'r') as file:
 #     data = json.load(file)
 
-# open the image
-image = Image.open('./data/test3.png').convert("RGB")
+# list of images
+images = [Image.open('./data/test1.png').convert("RGB"),
+         Image.open('./data/test2.png').convert("RGB"),
+         Image.open('./data/test3.png').convert("RGB")]
 
-# convert the image to a tensor
-image_tensor = to_tensor(image)
+# convert the images to tensors
+image_tensors = [to_tensor(image) for image in images]
 
-# initialize the object detetction model
-weights = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
-model = fasterrcnn_resnet50_fpn_v2(weights=weights, box_score_thresh=0.9)
-model.eval()
-
-# initialize the preprocessor
-preprocess = weights.transforms()
-
-# apply preprocessing to the image
-batch = [preprocess(image_tensor)]
-
-# get the model predictions
-prediction = model(batch)[0]
-
-# get the image dimensions
-H, W = image_tensor.shape[1:]
-
-# create a binary mask that determines the region of detected object
-mask = torch.zeros((H, W), dtype=torch.float32)
-for box in prediction['boxes']:
-    x1, y1, x2, y2 = box.int()
-    mask[y1:y2, x1:x2] = 1
+# get the mask which defines the location of the object
+object_masks = object_detection(frcnn_model, frcnn_weights, image_tensors)
 
 # apply custom image corruption only on the bounding box
-custom_corrupted_image_tensor = elastic_transform(image_tensor, mask)
+custom_corrupted_image_tensors = [elastic_transform(image_tensor, object_mask) for image_tensor, object_mask in zip(image_tensors, object_masks)]
 
 # convert image tensor back back to PIL Image
-custom_corrupted_image = to_pil(custom_corrupted_image_tensor.squeeze())
+custom_corrupted_images = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors]
 
 # figure for the original image and the corrupted image
-fig, axes = plt.subplots(1, 2, figsize=(8, 6))
+fig, axes = plt.subplots(len(images), 2, figsize=(10, 10))
 axes = axes.flatten()
 
-# plot the original image
-axes[0].imshow(image)
-axes[0].set_title("Original Image")
-axes[0].axis('off')
+for i in range(len(images)):
+    # plot the original image
+    axes[i*2].imshow(images[i])
+    axes[i*2].set_title("Original Image")
+    axes[i*2].axis('off')
 
-# plot the custom corrupted image
-axes[1].imshow(custom_corrupted_image)
-axes[1].set_title(f"Custom Corruption")
-axes[1].axis('off')
+    # plot the custom corrupted image
+    axes[(i*2)+1].imshow(custom_corrupted_images[i])
+    axes[(i*2)+1].set_title(f"Custom Corruption")
+    axes[(i*2)+1].axis('off')
 
 # save the images
 plt.savefig(f'./results/image_corruption2.png', bbox_inches='tight', pad_inches=0, dpi=300)
