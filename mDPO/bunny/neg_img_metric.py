@@ -78,13 +78,21 @@ image = Image.open('./data/test3.png').convert("RGB")
 image_tensor = to_tensor(image)
 
 # apply mDPO image corruption
-corrupted_image_tensor = forward_diffusion(image_tensor)
+corrupted_image_tensors = [random_crop(image_tensor),
+                          black_image(image_tensor),
+                          rotate_image(image_tensor),
+                          forward_diffusion(image_tensor, 200)]
 
 # convert image tensor back back to PIL Image
-corrupted_image = to_pil(corrupted_image_tensor.squeeze())
+corrupted_images = [to_pil(corrupted_image_tensor.squeeze()) for corrupted_image_tensor in corrupted_image_tensors]
+
+# no. of columns
+cols = 3
+# no. of rows
+rows = (len(corrupted_images) // cols) + 1
 
 # figure for the original image and the corrupted images
-fig, axes = plt.subplots(1, 2, figsize=(8, 10))
+fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
 axes = axes.flatten()
 
 # plot the original image
@@ -92,10 +100,15 @@ axes[0].imshow(image)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
-# plot the corrupted image
-axes[1].imshow(corrupted_image)
-axes[1].set_title("Corrupted Image")
-axes[1].axis('off')
+# plot the corrupted images
+for i in range(len(corrupted_images)):
+    axes[i+1].imshow(corrupted_images[i])
+    axes[i+1].set_title("Corrupted Image")
+    axes[i+1].axis('off')
+
+# turn off remaining plots
+for i in range(len(corrupted_images)+1, len(axes)):
+    axes[i].axis('off')
 
 # save the images
 plt.savefig(f'./results/neg_img_metric.png', bbox_inches='tight', pad_inches=0, dpi=300)
