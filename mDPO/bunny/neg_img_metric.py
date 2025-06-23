@@ -3,7 +3,7 @@ import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
 import warnings
-from peft import PeftModel
+from torchvision.models import vit_h_14, ViT_H_14_Weights
 from bunny_utils.util.mm_utils import tokenizer_image_token
 from torchvision.transforms import v2
 from torchvision.transforms.functional import rgb_to_grayscale
@@ -11,6 +11,10 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 import json
+
+# set device
+device = 'cuda'
+torch.set_default_device(device)
 
 # DEVISE A NEW METRIC THAT SOMEHOW
 # CORRELATES MULTIMODAL LLM PERFORMANCE AND NEGATIVE IMAGE SIMILARITY
@@ -77,39 +81,76 @@ image = Image.open('./data/test3.png').convert("RGB")
 # convert the image to a tensor
 image_tensor = to_tensor(image)
 
-# apply mDPO image corruption
-corrupted_image_tensors = [random_crop(image_tensor),
-                          black_image(image_tensor),
-                          rotate_image(image_tensor),
-                          forward_diffusion(image_tensor, 200)]
+# initialize the model
+weights = ViT_H_14_Weights.DEFAULT
+model = vit_h_14(weights=weights)
+model.eval()
 
-# convert image tensor back back to PIL Image
-corrupted_images = [to_pil(corrupted_image_tensor.squeeze()) for corrupted_image_tensor in corrupted_image_tensors]
+# image preprocessor
+preprocess = weights.transforms()
 
-# no. of columns
-cols = 3
-# no. of rows
-rows = (len(corrupted_images) // cols) + 1
+# create batch of data
+batch = preprocess(image_tensor.to(device)).unsqueeze(0)
 
-# figure for the original image and the corrupted images
-fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
-axes = axes.flatten()
+# list where encoder outputs will be stored
+encoder_outputs = []
 
-# plot the original image
-axes[0].imshow(image)
-axes[0].set_title("Original Image")
-axes[0].axis('off')
+# forward hook function
+# this will be called during the forward pass of each encoder layer
+# that is hooked to this function
+# module: the Pytorch module
+# input: inputs to that module
+# output: output of the forward pass
+def save_output(module, input, output):
+    # save the module outputs to the list
+    encoder_outputs.append(output.detach())
 
-# plot the corrupted images
-for i in range(len(corrupted_images)):
-    axes[i+1].imshow(corrupted_images[i])
-    axes[i+1].set_title("Corrupted Image")
-    axes[i+1].axis('off')
+hooks = []
+# iterate over each encoder layer
+for layer in model.encoder.layers:
+    # register the function above
+    # as a forward hook
+    hook = layer.register_forward_hook(save_output)
+    # save the hook if we want to remove it later
+    hooks.append(hook)
 
-# turn off remaining plots
-for i in range(len(corrupted_images)+1, len(axes)):
-    axes[i].axis('off')
+# get model outputs
+_ = model(batch)
+print(encoder_outputs, len(encoder_outputs))
 
-# save the images
-plt.savefig(f'./results/neg_img_metric.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+# # apply mDPO image corruption
+# corrupted_image_tensors = [random_crop(image_tensor),
+#                           black_image(image_tensor),
+#                           rotate_image(image_tensor),
+#                           forward_diffusion(image_tensor, 200)]
+
+# # convert image tensor back back to PIL Image
+# corrupted_images = [to_pil(corrupted_image_tensor.squeeze()) for corrupted_image_tensor in corrupted_image_tensors]
+
+# # no. of columns
+# cols = 3
+# # no. of rows
+# rows = (len(corrupted_images) // cols) + 1
+
+# # figure for the original image and the corrupted images
+# fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
+# axes = axes.flatten()
+
+# # plot the original image
+# axes[0].imshow(image)
+# axes[0].set_title("Original Image")
+# axes[0].axis('off')
+
+# # plot the corrupted images
+# for i in range(len(corrupted_images)):
+#     axes[i+1].imshow(corrupted_images[i])
+#     axes[i+1].set_title("Corrupted Image")
+#     axes[i+1].axis('off')
+
+# # turn off remaining plots
+# for i in range(len(corrupted_images)+1, len(axes)):
+#     axes[i].axis('off')
+
+# # save the images
+# plt.savefig(f'./results/neg_img_metric.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# plt.close()
