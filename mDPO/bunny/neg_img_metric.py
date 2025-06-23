@@ -58,6 +58,7 @@ def forward_diffusion(image, step=500):
         noise = torch.randn_like(x_0)
         alphas_t = alphas_bar_sqrt[t]
         alphas_1_m_t = one_minus_alphas_bar_sqrt[t]
+        #print(x_0.device, alphas_t.device, alphas_1_m_t.device, noise.device)
         return (alphas_t * x_0 + alphas_1_m_t * noise)
 
     #noise_delta = int(step)  # from 0-999
@@ -65,6 +66,48 @@ def forward_diffusion(image, step=500):
     image_tensor_cd = q_x(noisy_image, step)
 
     return image_tensor_cd.unsqueeze(0)
+
+# function that will return the encoder outputs
+def model_encoder_outputs(model, weights, img_tensor):
+    # set model to evaluation mode
+    model.eval()
+
+    # list where encoder outputs will be stored
+    encoder_outputs = []
+
+    # image preprocessor
+    preprocess = weights.transforms()
+
+    # create batch of data
+    batch = preprocess(img_tensor.squeeze().to(device)).unsqueeze(0)
+
+    # forward hook function
+    # this will be called during the forward pass of each encoder layer
+    # that is hooked to this function
+    # module: the Pytorch module to which we will attach this hook function
+    # input: inputs to that module
+    # output: output of the forward pass
+    def save_output(module, input, output):
+        # save the module outputs to the list
+        encoder_outputs.append(output.detach())
+
+    hooks = []
+    # iterate over each encoder layer
+    for layer in model.encoder.layers:
+        # register the function above
+        # as a forward hook
+        hook = layer.register_forward_hook(save_output)
+        # save the hook if we want to remove it later
+        hooks.append(hook)
+
+    # get model outputs
+    _ = model(batch)
+
+    # remove each hook
+    for hook in hooks:
+        hook.remove()
+
+    return encoder_outputs
 
 # object to convert a PIL image into a Pytorch tensor
 to_tensor = transforms.ToTensor()
@@ -79,50 +122,29 @@ to_pil = transforms.ToPILImage()
 image = Image.open('./data/test3.png').convert("RGB")
 
 # convert the image to a tensor
-image_tensor = to_tensor(image)
+image_tensor = to_tensor(image).to(device)
 
-# initialize the model
-weights = ViT_H_14_Weights.DEFAULT
-model = vit_h_14(weights=weights)
-model.eval()
+# apply mDPO image corruption
+corrupted_image_tensors = [random_crop(image_tensor),
+                          black_image(image_tensor),
+                          rotate_image(image_tensor),
+                          forward_diffusion(image_tensor, 200)]
 
-# image preprocessor
-preprocess = weights.transforms()
+# initialize the ViT model
+vit_weights = ViT_H_14_Weights.DEFAULT
+vit_model = vit_h_14(weights=vit_weights)
 
-# create batch of data
-batch = preprocess(image_tensor.to(device)).unsqueeze(0)
+# get the encoder outputs for original image
+orig_outputs = model_encoder_outputs(vit_model, vit_weights, image_tensor)
+# get the encoder outputs for corrupted images
+rc_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[0])
+black_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[1])
+rotated_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[2])
 
-# list where encoder outputs will be stored
-encoder_outputs = []
-
-# forward hook function
-# this will be called during the forward pass of each encoder layer
-# that is hooked to this function
-# module: the Pytorch module
-# input: inputs to that module
-# output: output of the forward pass
-def save_output(module, input, output):
-    # save the module outputs to the list
-    encoder_outputs.append(output.detach())
-
-hooks = []
-# iterate over each encoder layer
-for layer in model.encoder.layers:
-    # register the function above
-    # as a forward hook
-    hook = layer.register_forward_hook(save_output)
-    # save the hook if we want to remove it later
-    hooks.append(hook)
-
-# get model outputs
-_ = model(batch)
-print(encoder_outputs, len(encoder_outputs))
-
-# # apply mDPO image corruption
-# corrupted_image_tensors = [random_crop(image_tensor),
-#                           black_image(image_tensor),
-#                           rotate_image(image_tensor),
-#                           forward_diffusion(image_tensor, 200)]
+print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
+print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
+print(len(black_outputs), black_outputs[0].shape, black_outputs[-1].shape)
+print(len(rotated_outputs), rotated_outputs[0].shape, rotated_outputs[-1].shape)
 
 # # convert image tensor back back to PIL Image
 # corrupted_images = [to_pil(corrupted_image_tensor.squeeze()) for corrupted_image_tensor in corrupted_image_tensors]
