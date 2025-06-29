@@ -91,12 +91,13 @@ def generate_response(image, question, eval_model):
 #print(json_data[0])
 for idx, line in enumerate(json_data):
     image_src = line['image_src']
+    question = line['question']
     try:
         image = load_image(image_src)
+        response = generate_response(image, question, model)
     except:
-        continue
-    question = line['question']
-    response = generate_response(image, question, model)
+        response = "ERROR: Image could not be loaded"
+    
     # print(idx, response)
     line['model_answer'] = response
 
