@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import json
 import random
 import torch.nn.functional as F
+from collections import defaultdict
 
 # set device
 device = 'cuda'
@@ -128,7 +129,21 @@ def similarity(enc_out_1, enc_out_2):
         cosine_similarity = F.cosine_similarity(enc1_cls, enc2_cls, dim=0)
         similarities.append(cosine_similarity)
     
-    return sum(similarities)/len(similarities)
+    # lower-layer similarities
+    low_similarities = sum(similarities[:4])/len(similarities[:4])
+    # higher-layer similarities
+    high_similarities = sum(similarities[-4:])/len(similarities[-4:])
+
+    return low_similarities, high_similarities
+
+# function to calculate the average similarity
+# between different images
+def avg(scores):
+    # average of lower layer scores
+    lows = torch.stack([s[0] for s in scores]).mean().item()
+    # average of higher layer scores
+    highs = torch.stack([s[1] for s in scores]).mean().item()
+    return lows, highs
 
 # object to convert a PIL image into a Pytorch tensor
 to_tensor = transforms.ToTensor()
@@ -144,13 +159,13 @@ with open('./data/vlfeedback_llava_10k.json', 'r') as file:
 #image = Image.open('./data/test3.png').convert("RGB")
 # open some images from dataset randomly
 images = []
-for sample in random.sample(data, 4):
+for sample in random.sample(data, 10):
     images.append(Image.open('./data/merged_images/' + sample['img_path']).convert("RGB"))
 
 # convert the images to tensors
 image_tensors = [to_tensor(image).to(device) for image in images]
 
-# apply image corruption
+# apply different image corruption techniques
 fd_50_image_tensors = [forward_diffusion(image_tensor, 50) for image_tensor in image_tensors]
 fd_100_image_tensors = [forward_diffusion(image_tensor, 100) for image_tensor in image_tensors]
 fd_200_image_tensors = [forward_diffusion(image_tensor, 200) for image_tensor in image_tensors]
@@ -162,14 +177,31 @@ mdpo_image_tensors = [random_crop(image_tensor, 0.01, 0.2) for image_tensor in i
 vit_weights = ViT_H_14_Weights.DEFAULT
 vit_model = vit_h_14(weights=vit_weights)
 
+# dictionary to store similarity scores
+sim_scores = defaultdict(list)
+
 for i in range(len(image_tensors)):
     # get the encoder outputs for the original image
     orig_outputs = model_encoder_outputs(vit_model, vit_weights, image_tensors[i])
 
     # get the encoder outputs for the corrupted images
     rc_1_10_outputs = model_encoder_outputs(vit_model, vit_weights, rc_1_10_image_tensors[i])
+    rr_40_outputs = model_encoder_outputs(vit_model, vit_weights, rr_40_image_tensors[i])
+    fd_50_outputs = model_encoder_outputs(vit_model, vit_weights, fd_50_image_tensors[i])
+    fd_100_outputs = model_encoder_outputs(vit_model, vit_weights, fd_100_image_tensors[i])
+    fd_200_outputs = model_encoder_outputs(vit_model, vit_weights, fd_200_image_tensors[i])
 
-    print(similarity(orig_outputs, rc_1_10_outputs))
+    # store the similarity scores for each image
+    sim_scores['rc_1_10'].append(similarity(orig_outputs, rc_1_10_outputs))
+    sim_scores['rr_40'].append(similarity(orig_outputs, rr_40_outputs))
+    sim_scores['fd_50'].append(similarity(orig_outputs, fd_50_outputs))
+    sim_scores['fd_100'].append(similarity(orig_outputs, fd_100_outputs))
+    sim_scores['fd_200'].append(similarity(orig_outputs, fd_200_outputs))
+
+# display the similarity scores
+for corr_type, scores in sim_scores.items():
+    low_avg, high_avg = avg(scores)
+    print(f"Corruption Type: {corr_type:<15} Low-Level: {low_avg:<10.2f} High-Level: {high_avg:.2f}")
 
 # print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
 # print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
