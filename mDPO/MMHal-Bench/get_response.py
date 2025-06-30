@@ -97,6 +97,7 @@ for idx, line in enumerate(json_data):
         response = generate_response(image, question, model)
     except:
         response = "ERROR: Image could not be loaded"
+        print(f"Image {idx} could not be loaded")
     
     # print(idx, response)
     line['model_answer'] = response

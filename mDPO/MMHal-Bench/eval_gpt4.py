@@ -137,29 +137,41 @@ if __name__ == '__main__':
                 continue
 
         print(i, response.choices[0].message.content, flush=True)
-        responses.append(response.choices[0].message.content)
+        responses.append((response.choices[0].message.content, record['model_answer']))
         time.sleep(1)
 
-    # save responses
-    if args.evaluation is not None:
-        with open(args.evaluation, 'w') as f:
-            json.dump(responses, f, indent=4)
+    # # save responses
+    # if args.evaluation is not None:
+    #     with open(args.evaluation, 'w') as f:
+    #         json.dump(responses, f, indent=4)
 
     # analyze responses
     scores = []
-    for i, response in enumerate(responses):
+    # output to be saved
+    outputs = []
+    for i, (gpt_response, model_response) in enumerate(responses):
         #response = response['choices'][0]['message']['content']
-        response = response.replace('**', '').lower()
+        gpt_response_clean = gpt_response.replace('**', '').lower()
         scores_found = []
         for s in range(7):
-            if f'rating: {s}' in response.lower():
+            if f'rating: {s}' in gpt_response_clean.lower():
                 scores_found.append(s)
         if len(scores_found) == 1:
             scores.append(scores_found[0])
+            outputs.append({
+                'model_answer': model_response,
+                'gpt_evaluation': gpt_response,
+                'rating': scores_found[0]
+            })
         else:
             print('Warning: multiple or zero scores found')
-            print(i, response)
+            print(i, gpt_response_clean)
             scores.append(0)
+            outputs.append({
+                'model_answer': model_response,
+                'gpt_evaluation': gpt_response,
+                'rating': 0
+            })
 
     hallucination = []
     for s in scores:
@@ -177,3 +189,15 @@ if __name__ == '__main__':
     print('Average score: {:.2f}'.format(sum(scores) / len(scores)))
     print('Hallucination rate: {:.2f}'.format(sum(hallucination) / len(hallucination)))
     print('Average score for each question type:', ','.join([str(round(sum(scores_each[i]) / len(scores_each[i]), 2)) for i in range(8)]), flush=True)
+
+    # save responses
+    if args.evaluation is not None:
+        with open(args.evaluation, 'w') as f:
+            # save the final output
+            final_output = {
+                "gpt_model_used": args.gpt_model,
+                "average_score": round(sum(scores) / len(scores), 2),
+                "hallucination_rate": round(sum(hallucination) / len(hallucination), 2),
+                "evaluation": outputs
+            }
+            json.dump(final_output, f, indent=4)
