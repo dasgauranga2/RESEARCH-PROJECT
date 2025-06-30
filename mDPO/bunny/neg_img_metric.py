@@ -199,7 +199,23 @@ vit_weights = ViT_H_14_Weights.DEFAULT
 vit_model = vit_h_14(weights=vit_weights)
 
 # dictionary to store similarity scores
+# for different images and different image corruption techniques
 sim_scores = defaultdict(list)
+# gpt-4 evaluation scores for each image corruption
+gpt_scores = {
+    'rc_1_10': 2.98,
+    'rr_40': 2.66,
+    'fd_100': 2.65,
+    'fd_200': 2.55,
+    'ri': 2.71}
+# list to store average of lower layer similarities
+low_sim = []
+# list to store average of mid layer similarities
+mid_sim = []
+# list to store average of high layer similarities
+high_sim = []
+# list to store gpt-4 evaluation scores
+gpt_scores_list = []
 
 for i in range(len(image_tensors)):
     # get the encoder outputs for the original image
@@ -219,10 +235,38 @@ for i in range(len(image_tensors)):
     sim_scores['fd_200'].append(similarity(orig_outputs, fd_200_outputs))
     sim_scores['ri'].append(similarity(orig_outputs, ri_outputs))
 
-# display the similarity scores
+# display the similarity scores for each image corruption
 for corr_type, scores in sim_scores.items():
     low_avg, mid_avg, high_avg = avg(scores)
     print(f"Corruption Type: {corr_type:<15} Low-Level: {low_avg:<10.2f} Mid-Level: {mid_avg:<10.2f} High-Level: {high_avg:.2f}")
+
+    low_sim.append(low_avg)
+    mid_sim.append(mid_avg)
+    high_sim.append(high_avg)
+    gpt_scores_list.append(gpt_scores[corr_type])
+
+# figure for the similarity scores and performance
+fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+axes = axes.flatten()
+
+axes[0].scatter(low_sim, gpt_scores_list)
+axes[0].set_title("Low Layer Similarities")
+
+axes[1].scatter(mid_sim, gpt_scores_list)
+axes[1].set_title("Mid Layer Similarities")
+
+axes[2].scatter(high_sim, gpt_scores_list)
+axes[2].set_title("High Layer Similarities")
+
+for i in range(len(axes)):
+    axes[i].set_xlabel("Similarity Scores")
+    axes[i].set_ylabel("GPT-4 Evaluation Scores")
+    axes[i].set_xlim(0,1)
+    axes[i].grid(True)
+
+# save the plots
+plt.savefig(f'./results/perf_sim.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
 
 # print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
 # print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
