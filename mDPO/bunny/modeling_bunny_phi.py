@@ -2324,10 +2324,11 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             mask_visual_tokens: Optional[bool] = False,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         if mask_visual_tokens:
-            images = self.crop_images(images)
+            #images = self.crop_images(images)
             #images = self.rotate_images(images)
             #images = self.forward_diffusion(images)
             #images = self.crop_images_with_noise(images)
+            images = self.replace_with_random_images(images)
 
         if inputs_embeds is None:
             (
@@ -2357,14 +2358,26 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict
         ), labels
-
-    def crop_images(self, images):
+    
+    def replace_with_random_images(self, images):
         new_images = []
-        for image in images:
-            resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.3, 0.4))
-            image = resize_cropper(image.squeeze(0)).unsqueeze(0)
-            new_images.append(image)
+        for i, img in enumerate(images):
+            # indices excluding the current one
+            other_indices = list(range(len(images)))
+            other_indices.remove(i)
+
+            # choose a different image
+            rand_idx = random.choice(other_indices)
+            new_images.append(images[rand_idx])
         return new_images
+
+    # def crop_images(self, images):
+    #     new_images = []
+    #     for image in images:
+    #         resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.3, 0.4))
+    #         image = resize_cropper(image.squeeze(0)).unsqueeze(0)
+    #         new_images.append(image)
+    #     return new_images
     
     # def rotate_images(self, images):
     #     new_images = []
