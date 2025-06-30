@@ -31,8 +31,8 @@ def random_crop(image, low=0.01, high=0.1):
 
 # function to create a negative image
 # which is entirely black
-def black_image(image_tensor):
-    return torch.zeros_like(image_tensor)
+def black_image(image):
+    return torch.zeros_like(image)
 
 # function to create a negative image by 
 # randomly rotating the image
@@ -69,6 +69,20 @@ def forward_diffusion(image, step=500):
     image_tensor_cd = q_x(noisy_image, step)
 
     return image_tensor_cd.unsqueeze(0)
+
+# function to create a negative image by 
+# randomly replacing it with another image
+def replace_with_random_images(images):
+    new_images = []
+    for i, img in enumerate(images):
+        # indices excluding the current one
+        other_indices = list(range(len(images)))
+        other_indices.remove(i)
+
+        # choose a different image
+        rand_idx = random.choice(other_indices)
+        new_images.append(images[rand_idx])
+    return new_images
 
 # function that will return a list of encoder outputs
 # for an image tensor
@@ -128,22 +142,29 @@ def similarity(enc_out_1, enc_out_2):
         # calculate cosine similarity between them
         cosine_similarity = F.cosine_similarity(enc1_cls, enc2_cls, dim=0)
         similarities.append(cosine_similarity)
+
+    n = len(enc_out_1)
+    mid = n // 2
     
     # lower-layer similarities
     low_similarities = sum(similarities[:4])/len(similarities[:4])
+    # mid-layer similarities
+    mid_similarities = sum(similarities[mid-2:mid+2])/len(similarities[mid-2:mid+2])
     # higher-layer similarities
     high_similarities = sum(similarities[-4:])/len(similarities[-4:])
 
-    return low_similarities, high_similarities
+    return low_similarities, mid_similarities, high_similarities
 
 # function to calculate the average similarity
 # between different images
 def avg(scores):
     # average of lower layer scores
     lows = torch.stack([s[0] for s in scores]).mean().item()
+    # average of mid layer scores
+    mids = torch.stack([s[1] for s in scores]).mean().item()
     # average of higher layer scores
-    highs = torch.stack([s[1] for s in scores]).mean().item()
-    return lows, highs
+    highs = torch.stack([s[2] for s in scores]).mean().item()
+    return lows, mids, highs
 
 # object to convert a PIL image into a Pytorch tensor
 to_tensor = transforms.ToTensor()
@@ -159,19 +180,19 @@ with open('./data/vlfeedback_llava_10k.json', 'r') as file:
 #image = Image.open('./data/test3.png').convert("RGB")
 # open some images from dataset randomly
 images = []
-for sample in random.sample(data, 10):
+for sample in random.sample(data, 20):
     images.append(Image.open('./data/merged_images/' + sample['img_path']).convert("RGB"))
 
 # convert the images to tensors
 image_tensors = [to_tensor(image).to(device) for image in images]
 
 # apply different image corruption techniques
-fd_50_image_tensors = [forward_diffusion(image_tensor, 50) for image_tensor in image_tensors]
 fd_100_image_tensors = [forward_diffusion(image_tensor, 100) for image_tensor in image_tensors]
 fd_200_image_tensors = [forward_diffusion(image_tensor, 200) for image_tensor in image_tensors]
 rr_40_image_tensors = [rotate_image(image_tensor, -40, 40) for image_tensor in image_tensors]
 rc_1_10_image_tensors = [random_crop(image_tensor, 0.01, 0.1) for image_tensor in image_tensors]
 mdpo_image_tensors = [random_crop(image_tensor, 0.01, 0.2) for image_tensor in image_tensors]
+ri_image_tensors = replace_with_random_images(image_tensors)
 
 # initialize the ViT model
 vit_weights = ViT_H_14_Weights.DEFAULT
@@ -187,21 +208,21 @@ for i in range(len(image_tensors)):
     # get the encoder outputs for the corrupted images
     rc_1_10_outputs = model_encoder_outputs(vit_model, vit_weights, rc_1_10_image_tensors[i])
     rr_40_outputs = model_encoder_outputs(vit_model, vit_weights, rr_40_image_tensors[i])
-    fd_50_outputs = model_encoder_outputs(vit_model, vit_weights, fd_50_image_tensors[i])
     fd_100_outputs = model_encoder_outputs(vit_model, vit_weights, fd_100_image_tensors[i])
     fd_200_outputs = model_encoder_outputs(vit_model, vit_weights, fd_200_image_tensors[i])
+    ri_outputs = model_encoder_outputs(vit_model, vit_weights, ri_image_tensors[i])
 
     # store the similarity scores for each image
     sim_scores['rc_1_10'].append(similarity(orig_outputs, rc_1_10_outputs))
     sim_scores['rr_40'].append(similarity(orig_outputs, rr_40_outputs))
-    sim_scores['fd_50'].append(similarity(orig_outputs, fd_50_outputs))
     sim_scores['fd_100'].append(similarity(orig_outputs, fd_100_outputs))
     sim_scores['fd_200'].append(similarity(orig_outputs, fd_200_outputs))
+    sim_scores['ri'].append(similarity(orig_outputs, ri_outputs))
 
 # display the similarity scores
 for corr_type, scores in sim_scores.items():
-    low_avg, high_avg = avg(scores)
-    print(f"Corruption Type: {corr_type:<15} Low-Level: {low_avg:<10.2f} High-Level: {high_avg:.2f}")
+    low_avg, mid_avg, high_avg = avg(scores)
+    print(f"Corruption Type: {corr_type:<15} Low-Level: {low_avg:<10.2f} Mid-Level: {mid_avg:<10.2f} High-Level: {high_avg:.2f}")
 
 # print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
 # print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
