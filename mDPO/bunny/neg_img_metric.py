@@ -11,6 +11,8 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 import json
+import random
+import torch.nn.functional as F
 
 # set device
 device = 'cuda'
@@ -21,8 +23,8 @@ torch.set_default_device(device)
 
 # function to create a negative image by 
 # randomly cropping out a portion of the image
-def random_crop(image):
-    resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
+def random_crop(image, low=0.01, high=0.1):
+    resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(low, high))
     image = resize_cropper(image.squeeze(0)).unsqueeze(0)
     return image
 
@@ -33,8 +35,8 @@ def black_image(image_tensor):
 
 # function to create a negative image by 
 # randomly rotating the image
-def rotate_image(image):
-    rotator = v2.RandomRotation(degrees=(10, 80))  # fixed angle
+def rotate_image(image, low=-40, high=40):
+    rotator = v2.RandomRotation(degrees=(low, high))  # fixed angle
     return rotator(image.squeeze(0)).unsqueeze(0)
 
 # function to create a negative image by 
@@ -67,7 +69,8 @@ def forward_diffusion(image, step=500):
 
     return image_tensor_cd.unsqueeze(0)
 
-# function that will return the encoder outputs
+# function that will return a list of encoder outputs
+# for an image tensor
 def model_encoder_outputs(model, weights, img_tensor):
     # set model to evaluation mode
     model.eval()
@@ -109,69 +112,97 @@ def model_encoder_outputs(model, weights, img_tensor):
 
     return encoder_outputs
 
+# function when given two lists of encoder outputs of two different images
+# will calculate the similarity between them
+def similarity(enc_out_1, enc_out_2):
+
+    # list of similarity scores
+    similarities = []
+    for enc1, enc2 in zip(enc_out_1, enc_out_2):
+        # get CLS token of first
+        enc1_cls = enc1.squeeze()[0,:]
+        # get CLS token of second
+        enc2_cls = enc2.squeeze()[0,:]
+
+        # calculate cosine similarity between them
+        cosine_similarity = F.cosine_similarity(enc1_cls, enc2_cls, dim=0)
+        similarities.append(cosine_similarity)
+    
+    return sum(similarities)/len(similarities)
+
 # object to convert a PIL image into a Pytorch tensor
 to_tensor = transforms.ToTensor()
 # object to convert a Pytorch tensor into a PIL image
 to_pil = transforms.ToPILImage()
 
-# # open the training data json file
-# with open('./data/vlfeedback_llava_10k.json', 'r') as file:
-#     data = json.load(file)
+# open the training data json file
+with open('./data/vlfeedback_llava_10k.json', 'r') as file:
+    data = json.load(file)
+#print(data[0])
 
 # open the image
-image = Image.open('./data/test3.png').convert("RGB")
+#image = Image.open('./data/test3.png').convert("RGB")
+# open some images from dataset randomly
+images = []
+for sample in random.sample(data, 4):
+    images.append(Image.open('./data/merged_images/' + sample['img_path']).convert("RGB"))
 
-# convert the image to a tensor
-image_tensor = to_tensor(image).to(device)
+# convert the images to tensors
+image_tensors = [to_tensor(image).to(device) for image in images]
 
-# apply mDPO image corruption
-corrupted_image_tensors = [random_crop(image_tensor),
-                          black_image(image_tensor),
-                          rotate_image(image_tensor),
-                          forward_diffusion(image_tensor, 200)]
+# apply image corruption
+fd_50_image_tensors = [forward_diffusion(image_tensor, 50) for image_tensor in image_tensors]
+fd_100_image_tensors = [forward_diffusion(image_tensor, 100) for image_tensor in image_tensors]
+fd_200_image_tensors = [forward_diffusion(image_tensor, 200) for image_tensor in image_tensors]
+rr_40_image_tensors = [rotate_image(image_tensor, -40, 40) for image_tensor in image_tensors]
+rc_1_10_image_tensors = [random_crop(image_tensor, 0.01, 0.1) for image_tensor in image_tensors]
+mdpo_image_tensors = [random_crop(image_tensor, 0.01, 0.2) for image_tensor in image_tensors]
 
 # initialize the ViT model
 vit_weights = ViT_H_14_Weights.DEFAULT
 vit_model = vit_h_14(weights=vit_weights)
 
-# get the encoder outputs for original image
-orig_outputs = model_encoder_outputs(vit_model, vit_weights, image_tensor)
-# get the encoder outputs for corrupted images
-rc_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[0])
-black_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[1])
-rotated_outputs = model_encoder_outputs(vit_model, vit_weights, corrupted_image_tensors[2])
+for i in range(len(image_tensors)):
+    # get the encoder outputs for the original image
+    orig_outputs = model_encoder_outputs(vit_model, vit_weights, image_tensors[i])
 
-print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
-print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
-print(len(black_outputs), black_outputs[0].shape, black_outputs[-1].shape)
-print(len(rotated_outputs), rotated_outputs[0].shape, rotated_outputs[-1].shape)
+    # get the encoder outputs for the corrupted images
+    rc_1_10_outputs = model_encoder_outputs(vit_model, vit_weights, rc_1_10_image_tensors[i])
+
+    print(similarity(orig_outputs, rc_1_10_outputs))
+
+# print(len(orig_outputs), orig_outputs[0].shape, orig_outputs[-1].shape)
+# print(len(rc_outputs), rc_outputs[0].shape, rc_outputs[-1].shape)
+# print(len(black_outputs), black_outputs[0].shape, black_outputs[-1].shape)
+# print(len(rotated_outputs), rotated_outputs[0].shape, rotated_outputs[-1].shape)
 
 # # convert image tensor back back to PIL Image
 # corrupted_images = [to_pil(corrupted_image_tensor.squeeze()) for corrupted_image_tensor in corrupted_image_tensors]
 
 # # no. of columns
-# cols = 3
+# cols = 2
 # # no. of rows
-# rows = (len(corrupted_images) // cols) + 1
+# #rows = (len(corrupted_images)*2 // cols) + 1
+# rows = len(corrupted_images)
 
 # # figure for the original image and the corrupted images
 # fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
 # axes = axes.flatten()
 
-# # plot the original image
-# axes[0].imshow(image)
-# axes[0].set_title("Original Image")
-# axes[0].axis('off')
+# for i in range(len(images)):
+#     # plot the original image
+#     axes[i*2].imshow(images[i])
+#     axes[i*2].set_title("Original Image")
+#     axes[i*2].axis('off')
 
-# # plot the corrupted images
-# for i in range(len(corrupted_images)):
-#     axes[i+1].imshow(corrupted_images[i])
-#     axes[i+1].set_title("Corrupted Image")
-#     axes[i+1].axis('off')
+#     # plot the corrupted image
+#     axes[(i*2)+1].imshow(corrupted_images[i])
+#     axes[(i*2)+1].set_title("Corrupted Image")
+#     axes[(i*2)+1].axis('off')
 
-# # turn off remaining plots
-# for i in range(len(corrupted_images)+1, len(axes)):
-#     axes[i].axis('off')
+# # # turn off remaining plots
+# # for i in range(len(corrupted_images)+1, len(axes)):
+# #     axes[i].axis('off')
 
 # # save the images
 # plt.savefig(f'./results/neg_img_metric.png', bbox_inches='tight', pad_inches=0, dpi=300)
