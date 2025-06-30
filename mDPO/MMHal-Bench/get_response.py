@@ -38,8 +38,10 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map='auto',
     trust_remote_code=True)
 
+# which model to use
+model_name = 'mdpo_bunny_ri'
 # path of saved checkpoint
-checkpoint_path = './checkpoint/mdpo_bunny'
+checkpoint_path = f'./checkpoint/{model_name}'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
@@ -102,5 +104,5 @@ for idx, line in enumerate(json_data):
     # print(idx, response)
     line['model_answer'] = response
 
-with open('./MMHal-Bench/mdpo_results.json', 'w') as f:
+with open(f'./MMHal-Bench/responses/{model_name}_results.json', 'w') as f:
     json.dump(json_data, f, indent=4)
