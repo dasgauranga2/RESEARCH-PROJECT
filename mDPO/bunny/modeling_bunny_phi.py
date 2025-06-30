@@ -2324,8 +2324,10 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             mask_visual_tokens: Optional[bool] = False,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         if mask_visual_tokens:
-            #images = self.crop_images(images)
-            images = self.crop_images_with_noise(images)
+            images = self.crop_images(images)
+            #images = self.rotate_images(images)
+            #images = self.forward_diffusion(images)
+            #images = self.crop_images_with_noise(images)
 
         if inputs_embeds is None:
             (
@@ -2359,42 +2361,83 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
     def crop_images(self, images):
         new_images = []
         for image in images:
-            resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
+            resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.3, 0.4))
             image = resize_cropper(image.squeeze(0)).unsqueeze(0)
             new_images.append(image)
         return new_images
+    
+    # def rotate_images(self, images):
+    #     new_images = []
+    #     for image in images:
+    #         image_cpu = image.cpu()
+    #         rotator = v2.RandomRotation(degrees=(-40, 40))
+    #         image_cpu = rotator(image_cpu.squeeze(0)).unsqueeze(0)
+    #         new_images.append(image_cpu.to(device=image.device, dtype=image.dtype))
+    #     return new_images
 
-    def crop_images_with_noise(self, images):
-        new_images = []
-        for image in images:
-            image = image.squeeze(0)  # shape: [C, H, W]
+    # def forward_diffusion(self, images):
+    #     new_images = []
+    #     for image in images:
+    #         num_steps = 1000  # number of steps to apply the diffusion process
+    #         step = 200  # step at which we will pick the image
 
-            C, H, W = image.shape
+    #         # decide beta in each step
+    #         betas = torch.linspace(-6, 6, num_steps)
+    #         betas = torch.sigmoid(betas) * (0.5e-2 - 1e-5) + 1e-5
 
-            # Random crop size (1–4% of image area)
-            #scale = random.uniform(0.005, 0.01)
-            scale = 0.04
-            aspect_ratio = random.uniform(0.5, 2.0)
-            h_crop = int((scale * H * W * aspect_ratio) ** 0.5)
-            w_crop = int((scale * H * W / aspect_ratio) ** 0.5)
+    #         # decide alphas in each step
+    #         alphas = 1 - betas
+    #         alphas_prod = torch.cumprod(alphas, dim=0)
+    #         #alphas_prod_p = torch.cat([torch.tensor([1]).float(), alphas_prod[:-1]], 0)  # p for previous
+    #         alphas_bar_sqrt = torch.sqrt(alphas_prod)
+    #         #one_minus_alphas_bar_log = torch.log(1 - alphas_prod)
+    #         one_minus_alphas_bar_sqrt = torch.sqrt(1 - alphas_prod)
 
-            h_crop = min(h_crop, H)
-            w_crop = min(w_crop, W)
+    #         def q_x(x_0, t):
+    #             noise = torch.randn_like(x_0)
+    #             alphas_t = alphas_bar_sqrt[t]
+    #             alphas_1_m_t = one_minus_alphas_bar_sqrt[t]
+    #             #print(x_0.device, alphas_t.device, alphas_1_m_t.device, noise.device)
+    #             return (alphas_t * x_0 + alphas_1_m_t * noise)
 
-            # Random crop position
-            top = random.randint(0, H - h_crop)
-            left = random.randint(0, W - w_crop)
+    #         #noise_delta = int(step)  # from 0-999
+    #         noisy_image = image.squeeze(0)
+    #         image_tensor_cd = q_x(noisy_image, step)
 
-            # Generate Gaussian noise patch
-            noise_patch = torch.normal(mean=0.5, std=0.2, size=(C, h_crop, w_crop)).to(image.device)
-            noise_patch = torch.clamp(noise_patch, 0.0, 1.0)  # optional if your image is in [0, 1] range
+    #         new_images.append(image_tensor_cd.unsqueeze(0))
+    #     return new_images
 
-            # Replace patch in image
-            image[:, top:top + h_crop, left:left + w_crop] = noise_patch
+    # def crop_images_with_noise(self, images):
+    #     new_images = []
+    #     for image in images:
+    #         image = image.squeeze(0)  # shape: [C, H, W]
 
-            image = image.unsqueeze(0)
-            new_images.append(image)
-        return new_images
+    #         C, H, W = image.shape
+
+    #         # Random crop size (1–4% of image area)
+    #         #scale = random.uniform(0.005, 0.01)
+    #         scale = 0.04
+    #         aspect_ratio = random.uniform(0.5, 2.0)
+    #         h_crop = int((scale * H * W * aspect_ratio) ** 0.5)
+    #         w_crop = int((scale * H * W / aspect_ratio) ** 0.5)
+
+    #         h_crop = min(h_crop, H)
+    #         w_crop = min(w_crop, W)
+
+    #         # Random crop position
+    #         top = random.randint(0, H - h_crop)
+    #         left = random.randint(0, W - w_crop)
+
+    #         # Generate Gaussian noise patch
+    #         noise_patch = torch.normal(mean=0.5, std=0.2, size=(C, h_crop, w_crop)).to(image.device)
+    #         noise_patch = torch.clamp(noise_patch, 0.0, 1.0)  # optional if your image is in [0, 1] range
+
+    #         # Replace patch in image
+    #         image[:, top:top + h_crop, left:left + w_crop] = noise_patch
+
+    #         image = image.unsqueeze(0)
+    #         new_images.append(image)
+    #     return new_images
 
 
 AutoConfig.register("bunny-phi", BunnyPhiConfig)
