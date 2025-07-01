@@ -18,6 +18,7 @@ import matplotlib.patches as patches
 from skimage.transform import PiecewiseAffineTransform, warp
 from io import BytesIO
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, FasterRCNN_ResNet50_FPN_V2_Weights
+from torchvision.utils import draw_bounding_boxes
 
 # function to apply elastic warping on an image
 # only on the bounding box part
@@ -46,7 +47,7 @@ def elastic_transform(image, mask, alpha=600, sigma=20):
 # function to perform object detection on an image
 # and return a binary mask which specifies the region
 # where an object is detected
-def object_detection(model, weights, image_tensors):
+def elastic_object_detection(model, weights, image_tensors):
     # initialize the preprocessor
     preprocess = weights.transforms()
 
@@ -92,6 +93,47 @@ def object_detection(model, weights, image_tensors):
 
     return all_masks, predictions
 
+# function to perform object detection on an image
+# and draw the bounding box on the image
+def draw_bounding_box(model, weights, image_tensors):
+    # initialize the preprocessor
+    preprocess = weights.transforms()
+
+    # apply preprocessing to the image
+    batch = [preprocess(image_tensor).to(device) for image_tensor in image_tensors]
+
+    # get the model predictions
+    # each prediction is of the format :-
+    # {'boxes': tensor([[ 50.0912, 179.3047, 852.6385, 732.4894]], grad_fn=<StackBackward0>),
+    # 'labels': tensor([17]),
+    # 'scores': tensor([0.9971], grad_fn=<IndexBackward0>)}
+    predictions = model(batch)
+
+    # images with bounding boxes drawn on them
+    modified_images = []
+    for i in range(len(image_tensors)):
+        # get each image
+        modified_image = image_tensors[i].clone()
+
+        # convert to uint8 in the range [0, 255]
+        if modified_image.max() <= 1:
+            modified_image = (modified_image*255).to(torch.uint8)
+        else:
+            modified_image = modified_image.to(torch.uint8)
+
+        # draw the bounding boxes
+        modified_image = draw_bounding_boxes(
+            modified_image,
+            boxes=predictions[i]['boxes'],
+            colors='blue',
+            fill=True,
+            width=2
+        )
+
+        modified_images.append(modified_image)
+    
+    return modified_images
+
 # object to convert a Pytorch tensor into a PIL image
 to_pil = transforms.ToPILImage()
 
@@ -122,11 +164,12 @@ for sample in random.sample(data, 4):
 # convert the images to tensors
 image_tensors = [to_tensor(image) for image in images]
 
-# get the mask which defines the location of the object
-object_masks, _ = object_detection(frcnn_model, frcnn_weights, image_tensors)
+# # get the mask which defines the location of the object
+# object_masks, _ = object_detection(frcnn_model, frcnn_weights, image_tensors)
 
 # apply custom image corruption only on the bounding box
-custom_corrupted_image_tensors = [elastic_transform(image_tensor, object_mask) for image_tensor, object_mask in zip(image_tensors, object_masks)]
+#custom_corrupted_image_tensors = [elastic_transform(image_tensor, object_mask) for image_tensor, object_mask in zip(image_tensors, object_masks)]
+custom_corrupted_image_tensors = draw_bounding_box(frcnn_model, frcnn_weights, image_tensors)
 
 # convert image tensor back back to PIL Image
 custom_corrupted_images = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors]
