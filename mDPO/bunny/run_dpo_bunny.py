@@ -13,8 +13,8 @@ from transformers import GPTQConfig, deepspeed
 from transformers.trainer_pt_utils import LabelSmoother
 
 from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
-from data_collator_bunny_phi import mDPODataCollatorBunny, DPADataCollatorForDPO
-from dpo_trainer import mDPOTrainer, DPATrainer, VanillaDPOTrainer
+from data_collator_bunny_phi import mDPODataCollatorBunny, mDPOCNIDataCollatorBunny
+from dpo_trainer import mDPOTrainer, mDPOCNITrainer
 
 # run the script using the following command
 # CUDA_VISIBLE_DEVICES=0 python bunny/run_dpo_bunny.py
@@ -25,7 +25,6 @@ from dpo_trainer import mDPOTrainer, DPATrainer, VanillaDPOTrainer
 class ModelArguments:
     model_name_or_path: str = field(default=None)
     dataset_path: str = field(default=None)
-
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
@@ -292,13 +291,13 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = VanillaDPOTrainer(
+    trainer = mDPOCNITrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=mDPODataCollatorBunny(
+        data_collator=mDPOCNIDataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,
@@ -323,7 +322,6 @@ def train(config_dict):
     # saves the model for huggingface trainer
     safe_save_model_for_hf_trainer(trainer=trainer,
                                     output_dir=training_args.output_dir)
-
 
 if __name__ == "__main__":
     with open("bunny/config.yaml") as f:

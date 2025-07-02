@@ -2328,7 +2328,8 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             #images = self.rotate_images(images)
             #images = self.forward_diffusion(images)
             #images = self.crop_images_with_noise(images)
-            images = self.replace_with_random_images(images)
+            #images = self.replace_with_random_images(images)
+            pass
 
         if inputs_embeds is None:
             (
@@ -2359,17 +2360,17 @@ class mDPOBunnyPhiForCausalLM(BunnyPhiForCausalLM):
             return_dict=return_dict
         ), labels
     
-    def replace_with_random_images(self, images):
-        new_images = []
-        for i, img in enumerate(images):
-            # indices excluding the current one
-            other_indices = list(range(len(images)))
-            other_indices.remove(i)
+    # def replace_with_random_images(self, images):
+    #     new_images = []
+    #     for i, img in enumerate(images):
+    #         # indices excluding the current one
+    #         other_indices = list(range(len(images)))
+    #         other_indices.remove(i)
 
-            # choose a different image
-            rand_idx = random.choice(other_indices)
-            new_images.append(images[rand_idx])
-        return new_images
+    #         # choose a different image
+    #         rand_idx = random.choice(other_indices)
+    #         new_images.append(images[rand_idx])
+    #     return new_images
 
     # def crop_images(self, images):
     #     new_images = []
