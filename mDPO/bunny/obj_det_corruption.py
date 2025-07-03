@@ -322,93 +322,94 @@ print(len(data))
 #print(data[0])
 
 # APPLY IMAGE CORRUPTION TO ENTIRE DATASET AND SAVE THEM
-# # image file names
-# image_names = [sample['img_path'] for sample in data]
-# print(len(image_names), len(set(image_names))) # some images are repeated
+# image file names
+image_names = [sample['img_path'] for sample in data]
+print(len(image_names), len(set(image_names))) # some images are repeated
 
-# # list of images
-# images = []
-# for image_name in tqdm(image_names, desc='Loading images'):
-#     images.append(Image.open('./data/merged_images/' + image_name).convert("RGB"))
-
-# print(len(images))
-
-# # list of image tensors
-# image_tensors = []
-# for image in tqdm(images, desc='Converting images to tensors'):
-#     image_tensors.append(to_tensor(image))
-
-# print(len(image_tensors))
-
-# # list of image tensors with bounding box on them
-# custom_corrupted_image_tensors = []
-# for i in tqdm(range(0, len(image_tensors), 4), desc='Applying object detection'):
-#     batch_image_tensors = image_tensors[i:i+4]
-#     batch_corrupted_image_tensors = draw_bounding_box(frcnn_model, frcnn_weights, batch_image_tensors)
-#     custom_corrupted_image_tensors += batch_corrupted_image_tensors
-
-# print(len(custom_corrupted_image_tensors))
-
-# # save the images
-# for i in tqdm(range(len(custom_corrupted_image_tensors)), desc='Converting tensors back to images'):
-#     pil_image = to_pil(custom_corrupted_image_tensors[i].squeeze())
-#     save_path = './data/merged_images_corrupted/' + image_names[i]
-#     pil_image.save(save_path)
-
-# print(len(os.listdir('./data/merged_images_corrupted/')))
-
-# APPLY IMAGE CORRUPTION TO SOME IMAGES FROM THE DATASET
-# randomly select some images
+# list of images
 images = []
-for sample in random.sample(data, 6):
-    images.append(Image.open('./data/merged_images/' + sample['img_path']).convert("RGB"))
+for image_name in tqdm(image_names, desc='Loading images'):
+    images.append(Image.open('./data/merged_images/' + image_name).convert("RGB"))
 
-# convert the images to tensors
-image_tensors = [to_tensor(image) for image in images]
+print(len(images))
 
-# # get the mask which defines the location of the object
-# object_masks, _ = object_detection(frcnn_model, frcnn_weights, image_tensors)
+# list of image tensors
+image_tensors = []
+for image in tqdm(images, desc='Converting images to tensors'):
+    image_tensors.append(to_tensor(image))
 
-# apply custom image corruption only on the bounding box
-#custom_corrupted_image_tensors = [elastic_transform(image_tensor, object_mask) for image_tensor, object_mask in zip(image_tensors, object_masks)]
-#custom_corrupted_image_tensors = draw_bounding_box(frcnn_model, frcnn_weights, image_tensors)
-custom_corrupted_image_tensors1, custom_corrupted_image_tensors2 = apply_elastic_warping(frcnn_model, frcnn_weights, image_tensors)
+print(len(image_tensors))
 
-# convert image tensor back back to PIL Image
-#custom_corrupted_images = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors]
-custom_corrupted_images1 = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors1]
-custom_corrupted_images2 = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors2]
+# list of image tensors with bounding box on them
+custom_corrupted_image_tensors = []
+for i in tqdm(range(0, len(image_tensors), 4), desc='Applying object detection'):
+    batch_image_tensors = image_tensors[i:i+4]
+    #batch_corrupted_image_tensors = draw_bounding_box(frcnn_model, frcnn_weights, batch_image_tensors)
+    _, batch_corrupted_image_tensors = apply_elastic_warping(frcnn_model, frcnn_weights, batch_image_tensors)
+    custom_corrupted_image_tensors += batch_corrupted_image_tensors
 
-# figure for the original image and the corrupted images
-fig, axes = plt.subplots(len(images), 3, figsize=(15, 20))
-axes = axes.flatten()
-
-for i in range(len(images)):
-    # # plot the original image
-    # axes[i*2].imshow(images[i])
-    # axes[i*2].set_title("Original Image")
-    # axes[i*2].axis('off')
-
-    # # plot the custom corrupted image
-    # axes[(i*2)+1].imshow(custom_corrupted_images[i])
-    # axes[(i*2)+1].set_title(f"Custom Corruption")
-    # axes[(i*2)+1].axis('off')
-
-    # plot the original image
-    axes[i*3].imshow(images[i])
-    axes[i*3].set_title("Original Image")
-    axes[i*3].axis('off')
-
-    # plot the custom corrupted image
-    axes[(i*3)+1].imshow(custom_corrupted_images1[i])
-    axes[(i*3)+1].set_title(f"Custom Corruption")
-    axes[(i*3)+1].axis('off')
-
-    # plot the custom corrupted image
-    axes[(i*3)+2].imshow(custom_corrupted_images2[i])
-    axes[(i*3)+2].set_title(f"Custom Corruption")
-    axes[(i*3)+2].axis('off')
+print(len(custom_corrupted_image_tensors))
 
 # save the images
-plt.savefig(f'./results/obj_det_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+for i in tqdm(range(len(custom_corrupted_image_tensors)), desc='Converting tensors back to images'):
+    pil_image = to_pil(custom_corrupted_image_tensors[i].squeeze())
+    save_path = './data/merged_images_corrupted/' + image_names[i]
+    pil_image.save(save_path)
+
+print(len(os.listdir('./data/merged_images_corrupted/')))
+
+# # APPLY IMAGE CORRUPTION TO SOME IMAGES FROM THE DATASET
+# # randomly select some images
+# images = []
+# for sample in random.sample(data, 6):
+#     images.append(Image.open('./data/merged_images/' + sample['img_path']).convert("RGB"))
+
+# # convert the images to tensors
+# image_tensors = [to_tensor(image) for image in images]
+
+# # # get the mask which defines the location of the object
+# # object_masks, _ = object_detection(frcnn_model, frcnn_weights, image_tensors)
+
+# # apply custom image corruption only on the bounding box
+# #custom_corrupted_image_tensors = [elastic_transform(image_tensor, object_mask) for image_tensor, object_mask in zip(image_tensors, object_masks)]
+# #custom_corrupted_image_tensors = draw_bounding_box(frcnn_model, frcnn_weights, image_tensors)
+# custom_corrupted_image_tensors1, custom_corrupted_image_tensors2 = apply_elastic_warping(frcnn_model, frcnn_weights, image_tensors)
+
+# # convert image tensor back back to PIL Image
+# #custom_corrupted_images = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors]
+# custom_corrupted_images1 = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors1]
+# custom_corrupted_images2 = [to_pil(custom_corrupted_image_tensor.squeeze()) for custom_corrupted_image_tensor in custom_corrupted_image_tensors2]
+
+# # figure for the original image and the corrupted images
+# fig, axes = plt.subplots(len(images), 3, figsize=(15, 20))
+# axes = axes.flatten()
+
+# for i in range(len(images)):
+#     # # plot the original image
+#     # axes[i*2].imshow(images[i])
+#     # axes[i*2].set_title("Original Image")
+#     # axes[i*2].axis('off')
+
+#     # # plot the custom corrupted image
+#     # axes[(i*2)+1].imshow(custom_corrupted_images[i])
+#     # axes[(i*2)+1].set_title(f"Custom Corruption")
+#     # axes[(i*2)+1].axis('off')
+
+#     # plot the original image
+#     axes[i*3].imshow(images[i])
+#     axes[i*3].set_title("Original Image")
+#     axes[i*3].axis('off')
+
+#     # plot the custom corrupted image
+#     axes[(i*3)+1].imshow(custom_corrupted_images1[i])
+#     axes[(i*3)+1].set_title(f"Custom Corruption")
+#     axes[(i*3)+1].axis('off')
+
+#     # plot the custom corrupted image
+#     axes[(i*3)+2].imshow(custom_corrupted_images2[i])
+#     axes[(i*3)+2].set_title(f"Custom Corruption")
+#     axes[(i*3)+2].axis('off')
+
+# # save the images
+# plt.savefig(f'./results/obj_det_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# plt.close()
