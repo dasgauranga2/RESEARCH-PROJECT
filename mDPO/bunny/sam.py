@@ -21,7 +21,7 @@ device = 'cuda'
 torch.set_default_device(device)
 
 # CALCULATE THE RELATIVE ATTENTION MAP
-# WHICH SHOWS WHERE THE LLM IS LOOKING AT THE IMAGE WHEN ANSWERING A QUESTION
+# WHICH SHOWS WHERE THE MULTIMODAL LLM IS LOOKING AT THE IMAGE WHEN ANSWERING A QUESTION
 
 # BUNNY PROCESSES THE INPUT IMAGE IN THE FOLLOWING STEPS
 # 1. THE INPUT IMAGE IS RESIZED TO 384 x 384
@@ -30,9 +30,9 @@ torch.set_default_device(device)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# variable to decide which model to use
-# 'Bunny', 'DPO', 'mDPO'
-which_model = 'mDPO'
+# variable to decide which checkpoint to use
+#model_name = 'mdpo_bunny'
+model_name = 'mdpo_bunny_cni'
 
 # load the reference model
 model = AutoModelForCausalLM.from_pretrained(
@@ -41,6 +41,9 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map='auto',
     trust_remote_code=True)
 
+# path of saved checkpoint
+checkpoint_path = f'./checkpoint/{model_name}'
+
 # vision_tower = model.get_vision_tower()
 # num_patches  = vision_tower.num_patches
 # patch_grid_N = int(num_patches ** 0.5)
@@ -48,17 +51,11 @@ model = AutoModelForCausalLM.from_pretrained(
 # print(num_patches)
 # print(patch_grid_N)
 
-# path of saved checkpoint
-if which_model == 'DPO':
-    checkpoint_path = './checkpoint/dpo_bunny'
-else:
-    checkpoint_path = './checkpoint/mdpo_bunny'
-
 # determine if LoRA adapter weights should be used
-if which_model == 'DPO' or which_model == 'mDPO':
-    use_lora = True
-elif which_model == 'Bunny':
+if model_name is None:
     use_lora = False
+else:
+    use_lora = True
 
 if use_lora:
 
@@ -156,15 +153,14 @@ def prepare_inputs(prompt, response, tokenizer):
     #     "response_labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # labels for the prompt + chosen response with prompt part masked
     #     "prompt_input_ids": [101, 2023, 2003, 2019, 2742, 3430, 2007, 2019, 999, 1],  # input token IDs for the prompt with image tokens
     #     "prompt_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask for the prompt
-    #     "image": <tensor representation of the image>  # image tensor of shape (1,C,W,H)
     # }
 
     return batch
 
-# user query
-query = "How many traffic lights are there in the image?"
-# image path
-image_path = './data/test/count1.jpg'
+# # user query
+# query = "How many traffic lights are there in the image?"
+# # image path
+# image_path = './data/test/count1.jpg'
 
 # # user query
 # query = "What colour are the traffic lights on the left?"
@@ -186,10 +182,10 @@ image_path = './data/test/count1.jpg'
 # # image path
 # image_path = './data/test/count4.jpg'
 
-# # user query
-# query = "How many chairs are there in the image?"
-# # image path
-# image_path = './data/test/count5.jpg'
+# user query
+query = "How many chairs are there in the image?"
+# image path
+image_path = './data/test/count5.jpg'
 
 # # user query
 # query = "How many chairs are there in the image?"
@@ -384,45 +380,45 @@ def spatial_attention_map(question, answer, img_tensor, tokenizer, model, layer_
 
     return all_sam
 
-# function to apply image corruption
-def corrupt_image(pil_image):
-    to_tensor = ToTensor()
-    to_pil = ToPILImage()
-    image_tensor = to_tensor(pil_image)
-    corrupted_image_tensor = crop_image(image_tensor)
+# # function to apply image corruption
+# def corrupt_image(pil_image):
+#     to_tensor = ToTensor()
+#     to_pil = ToPILImage()
+#     image_tensor = to_tensor(pil_image)
+#     corrupted_image_tensor = crop_image(image_tensor)
 
-    return to_pil(corrupted_image_tensor.squeeze())
+#     return to_pil(corrupted_image_tensor.squeeze())
 
-# function that will build a model to predict entries
-# where generic is zero and actual is non-zero
-def predict_inf(rel_attn, spt_attn, gen_attn):
-    # flatten the attention maps
-    rel_attn = rel_attn.flatten()
-    spt_attn = spt_attn.flatten()
-    gen_attn = gen_attn.flatten()
+# # function that will build a model to predict entries
+# # where generic is zero and actual is non-zero
+# def predict_inf(rel_attn, spt_attn, gen_attn):
+#     # flatten the attention maps
+#     rel_attn = rel_attn.flatten()
+#     spt_attn = spt_attn.flatten()
+#     gen_attn = gen_attn.flatten()
 
-    # get those entries when generic is greater than zero
-    mask = gen_attn > 1e-10
+#     # get those entries when generic is greater than zero
+#     mask = gen_attn > 1e-10
 
-    # build the dataset
-    x = np.stack([gen_attn[mask], spt_attn[mask]], axis=1)
-    y = rel_attn[mask]
+#     # build the dataset
+#     x = np.stack([gen_attn[mask], spt_attn[mask]], axis=1)
+#     y = rel_attn[mask]
 
-    # regression model
-    regressor = KNeighborsRegressor(
-        n_neighbors=5,
-        weights='uniform'
-    )
-    regressor.fit(x, y)
+#     # regression model
+#     regressor = KNeighborsRegressor(
+#         n_neighbors=5,
+#         weights='uniform'
+#     )
+#     regressor.fit(x, y)
 
-    return regressor
+#     return regressor
 
 # transformer layer index
 layer_index = -1
 
 # reopen the original image
-#orig_image = Image.open(image_path)
-orig_image = corrupt_image(Image.open(image_path))
+orig_image = Image.open(image_path)
+#orig_image = corrupt_image(Image.open(image_path))
 # process the image into a tensor
 image_tensor = model.process_images([orig_image], model.config).to(dtype=model.dtype)
 # resize the image
@@ -537,7 +533,7 @@ for i in range(len(spt_attn_maps)):
 for i in range(len(spt_attn_maps)+1, len(axes)):
     axes[i].axis('off')
 
-plt.suptitle(f"Query: {query}\n{which_model} Answer: {response_text}", fontsize=10)
+plt.suptitle(f"Query: {query}\n{model_name} Answer: {response_text}", fontsize=10)
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig(f'./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
