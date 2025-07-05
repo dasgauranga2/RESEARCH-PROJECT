@@ -31,8 +31,8 @@ torch.set_default_device(device)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
 # variable to decide which checkpoint to use
-#model_name = 'mdpo_bunny'
-model_name = 'mdpo_bunny_cni'
+model_name = 'mdpo_bunny'
+#model_name = 'mdpo_bunny_cni'
 
 # load the reference model
 model = AutoModelForCausalLM.from_pretrained(
@@ -157,15 +157,10 @@ def prepare_inputs(prompt, response, tokenizer):
 
     return batch
 
-# # user query
-# query = "How many traffic lights are there in the image?"
-# # image path
-# image_path = './data/test/count1.jpg'
-
-# # user query
-# query = "What colour are the traffic lights on the left?"
-# # image path
-# image_path = './data/test/count1.jpg'
+# user query
+query = "How many traffic lights are there in the image?"
+# image path
+image_path = './data/test/count1.jpg'
 
 # # user query
 # query = "How many bicycles are there in the image?"
@@ -182,10 +177,10 @@ def prepare_inputs(prompt, response, tokenizer):
 # # image path
 # image_path = './data/test/count4.jpg'
 
-# user query
-query = "How many chairs are there in the image?"
-# image path
-image_path = './data/test/count5.jpg'
+# # user query
+# query = "How many chairs are there in the image?"
+# # image path
+# image_path = './data/test/count5.jpg'
 
 # # user query
 # query = "How many chairs are there in the image?"
@@ -193,16 +188,7 @@ image_path = './data/test/count5.jpg'
 # image_path = './data/test/count6.jpg'
 
 # # user query
-# query = "What is the colour of the chairs in the image?"
-# # response text
-# response = "There are four chairs."
-# # image path
-# image_path = './data/test/count6.jpg'
-
-# # user query
 # query = "How many teddy bears are there in the image?"
-# # response text
-# response = "There are seven teddy bears."
 # # image path
 # image_path = './data/test/count8.jpg'
 
@@ -210,41 +196,6 @@ image_path = './data/test/count5.jpg'
 # query = "How many traffic signs in the image?"
 # # image path
 # image_path = './data/test/count9.jpg'
-
-# # user query
-# query = "How many cars are there in the image?"
-# # response text
-# response = "There are two cars."
-# # image path
-# image_path = './data/test/count10.jpg'
-
-# # user query
-# query = "How many people are there in the image?"
-# # response text
-# response = "There are four people in the image."
-# # image path
-# image_path = './data/test/count11.jpg'
-
-# # user query
-# query = "How many oysters can you see in the photo?"
-# # response text
-# response = "There are five oysters visible in the photo."
-# # image path
-# image_path = './data/test/count12.jpg'
-
-# # user query
-# query = "How many horses are there in the photo?"
-# # response text
-# response = "There are three horses in the photo."
-# # image path
-# image_path = './data/test/count13.jpg'
-
-# # user query
-# query = "How many forks can you see?"
-# # response text
-# response = "There are two forks."
-# # image path
-# image_path = './data/test/count14.jpg'
 
 # queries = [
 #     ("How many traffic lights are there in the image?", './data/test/count1.jpg'),
