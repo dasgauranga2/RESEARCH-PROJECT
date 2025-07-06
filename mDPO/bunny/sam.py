@@ -79,19 +79,10 @@ tokenizer = AutoTokenizer.from_pretrained(
     checkpoint_path,
     trust_remote_code=True)
 
-# function to crop an image
-def crop_image(image):
-    resize_cropper = v2.RandomResizedCrop(size=image.size()[-2:], scale=(0.01, 0.2))
-    image = resize_cropper(image.squeeze(0)).unsqueeze(0)
-    return image
-
 # processes a single data point
-def prepare_inputs(prompt, response, tokenizer):
+def prepare_inputs(prompt, tokenizer):
     # dictionary to store the inputs
     batch = {}
-
-    # tokenize the response texts
-    response_tokens = tokenizer(response, add_special_tokens=False)
 
     prompt_tokens = {}
     # prompt token ids
@@ -111,28 +102,7 @@ def prepare_inputs(prompt, response, tokenizer):
     ]
     prompt_tokens["attention_mask"] = new_attention_mask
 
-    # do the same for the response
-    eos_indices_response = [i for i, x in enumerate(response_tokens["input_ids"]) if x == eos_token_id]
-    new_attention_mask_c = [
-        0 if i in eos_indices_response else p for i, p in enumerate(response_tokens["attention_mask"])
-    ]
-    response_tokens["attention_mask"] = new_attention_mask_c
-
-    # add EOS token to end of responses
-    response_tokens["input_ids"].append(tokenizer.eos_token_id)
-    response_tokens["attention_mask"].append(1)
-
-    # concatenate the prompt and response tokens
-    response_sequence_tokens = {k: prompt_tokens[k] + response_tokens[k] for k in response_tokens}
-    # lables are created from the above tokens such that
-    # tokens corresponding to prompt tokens are masked 
-    response_sequence_tokens["labels"] = response_sequence_tokens["input_ids"][:]
-    response_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [-100] * len(
-        prompt_tokens["input_ids"]
-    )
-
     for k, toks in {
-        "response": response_sequence_tokens,
         "prompt": prompt_tokens,
     }.items():
         for type_key, tokens in toks.items():
@@ -148,9 +118,6 @@ def prepare_inputs(prompt, response, tokenizer):
 
     # the final result will be of this format
     #     batch = {
-    #     "response_input_ids": [101, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # input token IDs for the prompt + response
-    #     "response_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask
-    #     "response_labels": [-100, -100, -100, -100, -100, -100, -100, 2023, 2003, 1996, 2419, 3430, 1012, 102, 1],  # labels for the prompt + chosen response with prompt part masked
     #     "prompt_input_ids": [101, 2023, 2003, 2019, 2742, 3430, 2007, 2019, 999, 1],  # input token IDs for the prompt with image tokens
     #     "prompt_attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # attention mask for the prompt
     # }
@@ -197,54 +164,16 @@ image_path = './data/test/count1.jpg'
 # # image path
 # image_path = './data/test/count9.jpg'
 
-# queries = [
-#     ("How many traffic lights are there in the image?", './data/test/count1.jpg'),
-#     ("What colour are the traffic lights on the left?", './data/test/count1.jpg'),
-#     ("What colour are the traffic lights on the right?", './data/test/count1.jpg'),
-#     ("How many bicycles are there in the image?", './data/test/count2.jpg'),
-#     ("How many zebras are there in the image?", './data/test/count3.jpg'),
-#     ("How many players are there in the image?", './data/test/count4.jpg'),
-#     ("How many chairs are there in the image?", './data/test/count5.jpg'),
-#     ("How many chairs are there in the image?", './data/test/count6.jpg'),
-#     # ("How many traffic signs in the image?", './data/test/count9.jpg')
-# ]
-
-# function to generate the model's response
-def generate_response(question, img_tensor, tokenizer, model):
-    # prompt text
-    text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
-    text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
-    input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
-
-    # # load the image
-    # #image = Image.open('./AMBER/data/image/' + data['image']).convert('RGB')
-    # image = Image.open(path).convert('RGB')
-    # image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
-
-    # generate the model outputs
-    output_ids = model.generate(
-        input_ids,
-        images=img_tensor,
-        max_new_tokens=150,
-        use_cache=True,
-        repetition_penalty=1.0 # increase this to avoid chattering
-    )[0]
-
-    # get the generated text
-    response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip()
-
-    return response
-
-# function to calculate the generic attention map for a generic query
-def generic_attention_map(answer, img_tensor, tokenizer, model, layer_index = -1):
-    # generic query
-    generic_query = "Write a general description of the image."
+# function to calculate the spatial attention maps for each head
+def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = -1):
+    # list to store attention maps for each head
+    all_sam = []
 
     # prompt text with <image> token
-    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{generic_query} ASSISTANT:"
+    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
 
     # get the inputs for the model
-    data = prepare_inputs(prompt, answer, tokenizer)
+    data = prepare_inputs(prompt, tokenizer)
 
     # get the model outputs
     outputs = model(
@@ -258,111 +187,24 @@ def generic_attention_map(answer, img_tensor, tokenizer, model, layer_index = -1
         return_dict=True
     )
 
-    # get the attention scores from the last layer
+    # get the attention scores from a particular layer
     att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
-
-    assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
 
     # index position where the first image token is located
     image_token_pos = data["prompt_input_ids"].index(-200)
 
-    # extract attention scores when predicting the first answer token using the last prompt token
+    # extract attention scores when predicting the first answer token
     ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
-    # average over attention heads
-    avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
+    #print(f"USING TOKEN: {tokenizer.decode(data['prompt_input_ids'][-1])}")
 
-    # reshape to 27 x 27 (no. of patches) to get the spatial attention map
-    spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
-
-    return spatial_attn_map
-
-# function to calculate the spatial attention map for each answer token
-def spatial_attention_map(question, answer, img_tensor, tokenizer, model, layer_index = -1):
-    # list to store the spatial attention maps
-    all_sam = []
-
-    # prompt text with <image> token
-    prompt = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
-
-    # get the inputs for the model
-    data = prepare_inputs(prompt, answer, tokenizer)
-
-    # get the model outputs
-    outputs = model(
-        input_ids=torch.tensor(data["response_input_ids"], dtype=torch.long, device=device).unsqueeze(0),  # add batch dimension
-        attention_mask=torch.tensor(data["response_attention_mask"], dtype=torch.long, device=device).unsqueeze(0),
-        images=img_tensor.to(device),
-        labels=None,
-        use_cache=False,
-        output_attentions=True,
-        output_hidden_states=False,
-        return_dict=True
-    )
-
-    # get the attention scores from the last layer
-    att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
-
-    assert data["prompt_input_ids"].index(-200)==data["response_input_ids"].index(-200)
-
-    # index position where the first image token is located
-    image_token_pos = data["response_input_ids"].index(-200)
-
-    # index position where the first answer token is located
-    first_ans_idx = len(data["prompt_input_ids"])+728
-
-    for i in range(first_ans_idx, att_scores.shape[1]):
-        # extract attention scores when predicting i-th answer token
-        ans_img_attn_scores = att_scores[:, i-1, image_token_pos:image_token_pos+729] # (heads, 729)
-
-        # average over attention heads
-        avg_attn = ans_img_attn_scores.mean(dim=0)  # (729,)
-
-        # # normalize values
-        # avg_attn = avg_attn / avg_attn.sum()
-
+    for ans_img_attn_score in ans_img_attn_scores:
         # reshape to 27 x 27 (no. of patches) to get the spatial attention map
-        spatial_attn_map = avg_attn.reshape(27, 27).cpu().detach().numpy()
+        spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
-        # get the i-th answer token
-        ans_token = tokenizer.decode(data["response_input_ids"][i-728])
-
-        all_sam.append((spatial_attn_map,ans_token))
+        all_sam.append(spatial_attn_map)
 
     return all_sam
-
-# # function to apply image corruption
-# def corrupt_image(pil_image):
-#     to_tensor = ToTensor()
-#     to_pil = ToPILImage()
-#     image_tensor = to_tensor(pil_image)
-#     corrupted_image_tensor = crop_image(image_tensor)
-
-#     return to_pil(corrupted_image_tensor.squeeze())
-
-# # function that will build a model to predict entries
-# # where generic is zero and actual is non-zero
-# def predict_inf(rel_attn, spt_attn, gen_attn):
-#     # flatten the attention maps
-#     rel_attn = rel_attn.flatten()
-#     spt_attn = spt_attn.flatten()
-#     gen_attn = gen_attn.flatten()
-
-#     # get those entries when generic is greater than zero
-#     mask = gen_attn > 1e-10
-
-#     # build the dataset
-#     x = np.stack([gen_attn[mask], spt_attn[mask]], axis=1)
-#     y = rel_attn[mask]
-
-#     # regression model
-#     regressor = KNeighborsRegressor(
-#         n_neighbors=5,
-#         weights='uniform'
-#     )
-#     regressor.fit(x, y)
-
-#     return regressor
 
 # transformer layer index
 layer_index = -1
@@ -378,14 +220,8 @@ orig_image_resized = orig_image.convert('RGB').resize((384, 384))
 crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
 orig_image_cropped = orig_image_resized.crop(crop_box)
 
-# generate mdpo's response
-response_text = generate_response(query, image_tensor, tokenizer, model)
-
-# generate spatial attention maps of mdpo for every answer token
-spt_attn_maps = spatial_attention_map(query, response_text, image_tensor, tokenizer, model, layer_index)
-
-# generate generic attention map using the generic query
-gen_attn_map = generic_attention_map(response_text, image_tensor, tokenizer, model, layer_index)
+# generate spatial attention map of mdpo
+spt_attn_maps = spatial_attention_map(query, image_tensor, tokenizer, model, layer_index)
 
 cols = 4
 rows = (len(spt_attn_maps)+cols) // cols
@@ -399,92 +235,17 @@ axes[0].imshow(orig_image_cropped)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
-# plot the relative attention maps
+# plot the attention maps
 for i in range(len(spt_attn_maps)):
-    # get the spatial attention map for the answer token
-    spt_attn_map = spt_attn_maps[i][0]
-    # numpy array to store the relative attention map
-    rel_attn_map = np.zeros_like(spt_attn_map)
-    # divide the actual attention map for the answer token by generic attention map
-    np.divide(
-        spt_attn_map,
-        gen_attn_map,
-        out=rel_attn_map,
-        where=(gen_attn_map > 1e-10) # prevent divide-by-zero error
-    )
-    # there may still be division overflow problems if denominator is too small and numerator is too large
-    # find places in relative attention map with finite values
-    finite_mask = np.isfinite(rel_attn_map)
-    # find the finite maximum value
-    finite_max = rel_attn_map[finite_mask].max()
-    # set infinite values to finite maximum value
-    rel_attn_map[np.isinf(rel_attn_map)] = finite_max
-
-    # ############
-    # eps = 1e-10
-    # zero_mask = mdpo_gen_attn_map <= eps
-    # non_zero_mask = mdpo_gen_attn_map > eps
-
-    # ne = "No Entries"
-    # print(f"Generic Zero - Actual Attention Mean: {np.mean(mdpo_spt_attn_map[ zero_mask ]):e}")
-    # print(f"Generic Non-Zero - Actual Attention Mean: {np.mean(mdpo_spt_attn_map[non_zero_mask]):e}\n")
-
-    # ###################################################################################################################
-    # # 1. use a regression model to predict those entries when generic is zero and actual is non-zero
-    # # build the regression model using the attention maps
-    # regressor = predict_inf(rel_attn_map, mdpo_spt_attn_map, mdpo_gen_attn_map)
-
-    # assert rel_attn_map.shape==mdpo_spt_attn_map.shape and rel_attn_map.shape==mdpo_gen_attn_map.shape
-
-    # # get dimensions of relative attention map
-    # height, width = rel_attn_map.shape
-
-    # for j in range(height):
-    #     for k in range(width):
-    #         gen = mdpo_gen_attn_map[j,k]
-    #         act = mdpo_spt_attn_map[j,k]
-
-    #         # if generic is zero and actual is non-zero use the regression model to predict the values
-    #         if gen <= 1e-10 and act > 0:
-    #             x = np.array([[gen, act]])
-    #             pred = regressor.predict(x)[0]
-    #             rel_attn_map[j,k] = pred
-    # ###################################################################################################################
-
-    # ###################################################################################################################
-    # # 2. fill those entries when generic is zero and actual is non-zero with half of maximum relative attention
-    # # find the maximum relative attention
-    # max_rel_attn = np.max(rel_attn_map)
-
-    # # find those cases when generic is zero but actual attention is non-zero
-    # mask = (gen_attn_map <= 1e-10) & (spt_attn_map > 0)
-
-    # rel_attn_map[mask] = max_rel_attn/2
-    # ###################################################################################################################
-
-    # ###################################################################################################################
-    # # 3. fill those entries when generic is zero and actual is non-zero with actual attention divided by minimum such attention and then multiply with maximum relative attention
-    # # find the maximum relative attention
-    # max_rel_attn = np.max(rel_attn_map)
-
-    # # find those cases when generic is zero but actual attention is non-zero
-    # mask = (gen_attn_map <= 1e-10) & (spt_attn_map > 0)
-
-    # # find the minimum actual attention
-    # min_act_attn = np.min(spt_attn_map[mask])
-
-    # rel_attn_map[mask] = (spt_attn_map[mask]/min_act_attn)*max_rel_attn
-    # ###################################################################################################################
-
-    axes[i+1].imshow(rel_attn_map, cmap='viridis')
-    axes[i+1].set_title(f"Token: {spt_attn_maps[i][1]}")
+    axes[i+1].imshow(spt_attn_maps[i], cmap='viridis')
+    axes[i+1].set_title(f"Head: {i+1}")
     axes[i+1].axis('off')
 
 # turn off remaining plots
 for i in range(len(spt_attn_maps)+1, len(axes)):
     axes[i].axis('off')
 
-plt.suptitle(f"Query: {query}\n{model_name} Answer: {response_text}", fontsize=10)
+plt.suptitle(f"Query: {query}\nModel Name: {model_name}", fontsize=10)
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig(f'./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
