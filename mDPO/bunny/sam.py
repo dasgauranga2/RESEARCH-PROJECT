@@ -193,29 +193,32 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
     )
 
     # get the attention scores from a particular layer
-    att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
+    #att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
+
+    # number of layers
+    num_layers = len(outputs.attentions)
 
     # index position where the first image token is located
     image_token_pos = data["prompt_input_ids"].index(-200)
 
-    # when predicting the first answer token
-    # extract the attention scores to the image tokens
-    ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
+    for layer in range(num_layers):
+        # when predicting the first answer token
+        # extract the attention scores to the image tokens
+        ans_img_attn_scores = outputs.attentions[layer].squeeze()[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
-    # calculate the attention sum for each head
-    ans_img_attn_sums = attention_sums(ans_img_attn_scores) # (heads,)
+        # calculate the attention sum for each head
+        ans_img_attn_sums = attention_sums(ans_img_attn_scores) # (heads,)
 
+        for ans_img_attn_score, ans_img_attn_sum in zip(ans_img_attn_scores, ans_img_attn_sums):
+            # reshape to 27 x 27 (no. of patches) to get the spatial attention map
+            spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
-    for ans_img_attn_score, ans_img_attn_sum in zip(ans_img_attn_scores, ans_img_attn_sums):
-        # reshape to 27 x 27 (no. of patches) to get the spatial attention map
-        spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
-
-        all_sam.append((spatial_attn_map, ans_img_attn_sum))
+            all_sam.append((spatial_attn_map, ans_img_attn_sum))
 
     # sort by attention sum
     all_sam.sort(key=lambda x:x[1], reverse=True)
 
-    return all_sam
+    return all_sam[:20]
 
 # transformer layer index
 layer_index = -1
