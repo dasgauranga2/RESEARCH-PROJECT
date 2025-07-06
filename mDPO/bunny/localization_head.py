@@ -232,7 +232,7 @@ def spatial_attention_map(prompt, img_tensor, tokenizer, model):
     # get the attention scores from a particular layer
     #att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
 
-    # number of layers
+    # number of layers 
     num_layers = len(outputs.attentions)
 
     # index position where the first image token is located
@@ -264,6 +264,8 @@ def spatial_attention_map(prompt, img_tensor, tokenizer, model):
             all_sam.append((key, ans_img_attn_sum, entropy))
 
     # threshold to filter out the attention maps with low average attention sum
+    # first comment out the function code below then plot the average attention sum
+    # and then find the point of maximum curvature
     aas_threshold = 0.6
     # keep only those attention maps which have high attention map scores
     all_sam = [attn_map for attn_map in all_sam if attn_map[1] > aas_threshold]
@@ -274,14 +276,7 @@ def spatial_attention_map(prompt, img_tensor, tokenizer, model):
     global sel_entropy
     sel_entropy = sel_entropy + all_sam[:10]
 
-    # # sort the attention maps by spatial entropy
-    # all_sam.sort(key=lambda x:x[2])
-    # # take the top-10
-    # all_sam = all_sam[:10]
-
-    #return all_sam[:10]
-
-for data in tqdm(random.sample(json_data, 200), desc='Calculating attention sums'):
+for data in tqdm(random.sample(json_data, 500), desc='Calculating attention sums or entropies'):
     # path of image
     image_path = './data/merged_images/' + data['img_path']
     # prompt text
@@ -323,15 +318,16 @@ for data in tqdm(random.sample(json_data, 200), desc='Calculating attention sums
 
 # 2. PLOT THE SELECTION FREQUENCY FOR EACH HEAD
 # count frequency of each head
-head_counts = Counter([head_info[0] for head_info in sel_entropy])  # if sel_entropy has (key, entropy)
+head_counts = Counter([head_info[0] for head_info in sel_entropy])
 # get the most frequent heads
 freq_head_counts = head_counts.most_common(10)
 # plot the selection frequency
 plt.figure(figsize=(8, 4))
-plt.bar([str(fhc[0]) for fhc in freq_head_counts], [fhc[1] for fhc in freq_head_counts])
-plt.xticks(rotation=90)
+plt.bar([f"L{fhc[0][0]}-H{fhc[0][1]}" for fhc in freq_head_counts], [fhc[1] for fhc in freq_head_counts])
+plt.xticks(rotation=45)
 plt.xlabel("Attention Head (Layer,Head)")
 plt.ylabel("Selection Frequency")
+plt.title(f"{model_name} Selected Frequencies")
 plt.tight_layout()
 plt.savefig(f'./results/sel_freq.png', bbox_inches='tight', pad_inches=0, dpi=300)
 plt.close()
