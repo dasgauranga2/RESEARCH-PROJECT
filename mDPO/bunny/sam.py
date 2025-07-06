@@ -173,9 +173,9 @@ def attention_sums(img_attn_scores):
 # from a spatial attention map
 def spatial_entropy(attn_map):
     # calculate the mean threshold
-    mean = attn_map.mean()
+    mean_val = np.mean(attn_map)
     # compute the binarized attention map
-    binarized_attn_map = np.where(attn_map > mean, 1, 0)
+    binarized_attn_map = np.where(attn_map > mean_val, 1, 0)
 
     # keep track of cells visited for dfs
     visited = np.full_like(binarized_attn_map, False, dtype=bool)
@@ -275,12 +275,12 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
             spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
             # calculate the spatial entropy of each attention map
-            sp_entropy = spatial_entropy(spatial_attention_map)
+            sp_entropy = spatial_entropy(spatial_attn_map)
 
             all_sam.append((spatial_attn_map, ans_img_attn_sum, sp_entropy))
 
     # keep
-    all_sam.sort(key=lambda x:x[2], reverse=True)
+    all_sam.sort(key=lambda x:x[1], reverse=True)
 
     return all_sam[:20]
 
