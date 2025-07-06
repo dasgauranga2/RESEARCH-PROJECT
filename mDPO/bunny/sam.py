@@ -169,6 +169,66 @@ image_path = './data/test/count1.jpg'
 def attention_sums(img_attn_scores):
     return img_attn_scores.sum(dim=1)
 
+# function to calculate the spatial entropy
+# from a spatial attention map
+def spatial_entropy(attn_map):
+    # calculate the mean threshold
+    mean = attn_map.mean()
+    # compute the binarized attention map
+    binarized_attn_map = np.where(attn_map > mean, 1, 0)
+
+    # keep track of cells visited for dfs
+    visited = np.full_like(binarized_attn_map, False, dtype=bool)
+    # lengths of connected components
+    connected_components = {}
+    # index of each connected component
+    cci = 0
+    # total number of connected component cells
+    total_cc = 0
+
+    # function to perform dfs to find number of connected components
+    def dfs(i, j, idx):
+        if i < 0 or i >= len(visited) or j < 0 or j >= len(visited[0]):
+            return
+        if visited[i][j]: # if cell is visited
+            return
+        if binarized_attn_map[i][j] == 0: # if cell is 0
+            return
+
+        visited[i][j] = True
+        nonlocal total_cc
+        total_cc += 1
+        if idx not in connected_components:
+            connected_components[idx] = 1
+        else:
+            connected_components[idx] += 1
+
+        dfs(i, j+1, idx)
+        dfs(i, j-1, idx)
+        dfs(i+1, j, idx)
+        dfs(i-1, j, idx)
+        dfs(i+1, j+1, idx)
+        dfs(i-1, j+1, idx)
+        dfs(i+1, j-1, idx)
+        dfs(i-1, j-1, idx)
+    
+    # perform dfs to identify size of each connected component
+    for i in range(len(visited)):
+        for j in range(len(visited[0])):
+            if binarized_attn_map[i][j] == 1 and not visited[i][j]:
+                dfs(i, j, cci)
+                cci += 1
+    
+    # calculate the spatial entropy
+    entropy = 0
+    for ccs in connected_components.values():
+        # probability of connected components
+        pcn = ccs / total_cc
+
+        entropy = entropy - (pcn * np.log(pcn))
+    
+    return entropy
+
 # function to calculate the spatial attention maps for each head
 def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = -1):
     # list to store attention maps for each head
@@ -204,6 +264,7 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
     for layer in range(num_layers):
         # when predicting the first answer token
         # extract the attention scores to the image tokens
+        # for a particular layer
         ans_img_attn_scores = outputs.attentions[layer].squeeze()[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
         # calculate the attention sum for each head
@@ -213,10 +274,13 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
             # reshape to 27 x 27 (no. of patches) to get the spatial attention map
             spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
-            all_sam.append((spatial_attn_map, ans_img_attn_sum))
+            # calculate the spatial entropy of each attention map
+            sp_entropy = spatial_entropy(spatial_attention_map)
 
-    # sort by attention sum
-    all_sam.sort(key=lambda x:x[1], reverse=True)
+            all_sam.append((spatial_attn_map, ans_img_attn_sum, sp_entropy))
+
+    # keep
+    all_sam.sort(key=lambda x:x[2], reverse=True)
 
     return all_sam[:20]
 
@@ -252,7 +316,7 @@ axes[0].axis('off')
 # plot the attention maps
 for i in range(len(spt_attn_maps)):
     axes[i+1].imshow(spt_attn_maps[i][0], cmap='viridis')
-    axes[i+1].set_title(f"Head Attention Sum: {spt_attn_maps[i][1]:.2f}")
+    axes[i+1].set_title(f"Head Attention Sum: {spt_attn_maps[i][1]:.2f}\nHead Spatial Entropy: {spt_attn_maps[i][2]:.2f}")
     axes[i+1].axis('off')
 
 # turn off remaining plots
