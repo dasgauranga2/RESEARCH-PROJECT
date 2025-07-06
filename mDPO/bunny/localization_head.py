@@ -12,6 +12,7 @@ import numpy as np
 import json
 import random
 from tqdm import tqdm
+from collections import Counter
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -137,6 +138,8 @@ with open('./data/vlfeedback_llava_10k.json', 'r') as file:
 
 # dictionary to store attention sum values for each attention head
 attn_sum_vals = {}
+# list to store which heads with lowest entropies were selected
+sel_entropy = []
 
 # function to calculate the attention sum of each head 
 # corresponding to the image tokens
@@ -258,8 +261,18 @@ def spatial_attention_map(prompt, img_tensor, tokenizer, model):
             else:
                 attn_sum_vals[key].append(ans_img_attn_sum.item())
 
-    # # keep only those attention maps which have high attention map scores
-    # all_sam = [attn_map for attn_map in all_sam if attn_map[1] > 0.2]
+            all_sam.append((key, ans_img_attn_sum, entropy))
+
+    # threshold to filter out the attention maps with low average attention sum
+    aas_threshold = 0.6
+    # keep only those attention maps which have high attention map scores
+    all_sam = [attn_map for attn_map in all_sam if attn_map[1] > aas_threshold]
+
+    # sort according to entropy
+    all_sam.sort(key=lambda x:x[2])
+    # add the attention heads with the lowest entropies
+    global sel_entropy
+    sel_entropy = sel_entropy + all_sam[:10]
 
     # # sort the attention maps by spatial entropy
     # all_sam.sort(key=lambda x:x[2])
@@ -268,7 +281,7 @@ def spatial_attention_map(prompt, img_tensor, tokenizer, model):
 
     #return all_sam[:10]
 
-for data in tqdm(random.sample(json_data, 100), desc='Calculating attention sums'):
+for data in tqdm(random.sample(json_data, 200), desc='Calculating attention sums'):
     # path of image
     image_path = './data/merged_images/' + data['img_path']
     # prompt text
@@ -288,48 +301,37 @@ for data in tqdm(random.sample(json_data, 100), desc='Calculating attention sums
     # generate spatial attention map of mdpo
     spatial_attention_map(prompt_text, image_tensor, tokenizer, model)
 
-# calculate average attention sum for each head
-for head in attn_sum_vals:
-    average = sum(attn_sum_vals[head])/len(attn_sum_vals[head])
-    attn_sum_vals[head] = average
+# # 1. PLOT THE AVERAGE ATTENTION SUMS FOR EACH HEAD
+# # calculate average attention sum for each head
+# for head in attn_sum_vals:
+#     average = sum(attn_sum_vals[head])/len(attn_sum_vals[head])
+#     attn_sum_vals[head] = average
 
-# attention sum values in sorted order
-attn_sum_sorted = list(attn_sum_vals.values())
-attn_sum_sorted.sort()
+# # attention sum values in sorted order
+# attn_sum_sorted = list(attn_sum_vals.values())
+# attn_sum_sorted.sort()
 
-# plot the attention sum values
-plt.figure(figsize=(8, 4))
-plt.plot(range(len(attn_sum_sorted)), attn_sum_sorted)
-plt.xlabel('Head')
-plt.ylabel('Average Attention Sum')
-plt.grid(True)
-plt.tight_layout()
-plt.savefig(f'./results/avg_attn_sums.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
-
-# cols = 4
-# rows = (len(spt_attn_maps)+cols) // cols
-
-# # figure for the original image and the attention maps
-# fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
-# axes = axes.flatten()
-
-# # plot the original image
-# axes[0].imshow(orig_image_cropped)
-# axes[0].set_title("Original Image")
-# axes[0].axis('off')
-
-# # plot the attention maps
-# for i in range(len(spt_attn_maps)):
-#     axes[i+1].imshow(spt_attn_maps[i][0], cmap='viridis')
-#     axes[i+1].set_title(f"Layer: {spt_attn_maps[i][3]}\nHead: {spt_attn_maps[i][4]}")
-#     axes[i+1].axis('off')
-
-# # turn off remaining plots
-# for i in range(len(spt_attn_maps)+1, len(axes)):
-#     axes[i].axis('off')
-
-# plt.suptitle(f"Query: {query}\nModel Name: {model_name}", fontsize=10)
-# plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-# plt.savefig(f'./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# # plot the attention sum values
+# plt.figure(figsize=(8, 4))
+# plt.plot(range(len(attn_sum_sorted)), attn_sum_sorted)
+# plt.xlabel('Head')
+# plt.ylabel('Average Attention Sum')
+# plt.grid(True)
+# plt.tight_layout()
+# plt.savefig(f'./results/avg_attn_sums.png', bbox_inches='tight', pad_inches=0, dpi=300)
 # plt.close()
+
+# 2. PLOT THE SELECTION FREQUENCY FOR EACH HEAD
+# count frequency of each head
+head_counts = Counter([head_info[0] for head_info in sel_entropy])  # if sel_entropy has (key, entropy)
+# get the most frequent heads
+freq_head_counts = head_counts.most_common(10)
+# plot the selection frequency
+plt.figure(figsize=(8, 4))
+plt.bar([str(fhc[0]) for fhc in freq_head_counts], [fhc[1] for fhc in freq_head_counts])
+plt.xticks(rotation=90)
+plt.xlabel("Attention Head (Layer,Head)")
+plt.ylabel("Selection Frequency")
+plt.tight_layout()
+plt.savefig(f'./results/sel_freq.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
