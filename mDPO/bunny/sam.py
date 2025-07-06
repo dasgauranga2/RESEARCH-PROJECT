@@ -164,6 +164,11 @@ image_path = './data/test/count1.jpg'
 # # image path
 # image_path = './data/test/count9.jpg'
 
+# function to calculate the attention sum of each head 
+# corresponding to the image tokens
+def attention_sums(img_attn_scores):
+    return img_attn_scores.sum(dim=1)
+
 # function to calculate the spatial attention maps for each head
 def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = -1):
     # list to store attention maps for each head
@@ -193,16 +198,22 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
     # index position where the first image token is located
     image_token_pos = data["prompt_input_ids"].index(-200)
 
-    # extract attention scores when predicting the first answer token
+    # when predicting the first answer token
+    # extract the attention scores to the image tokens
     ans_img_attn_scores = att_scores[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
-    #print(f"USING TOKEN: {tokenizer.decode(data['prompt_input_ids'][-1])}")
+    # calculate the attention sum for each head
+    ans_img_attn_sums = attention_sums(ans_img_attn_scores) # (heads,)
 
-    for ans_img_attn_score in ans_img_attn_scores:
+
+    for ans_img_attn_score, ans_img_attn_sum in zip(ans_img_attn_scores, ans_img_attn_sums):
         # reshape to 27 x 27 (no. of patches) to get the spatial attention map
         spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
-        all_sam.append(spatial_attn_map)
+        all_sam.append((spatial_attn_map, ans_img_attn_sum))
+
+    # sort by attention sum
+    all_sam.sort(key=lambda x:x[1], reverse=True)
 
     return all_sam
 
@@ -237,8 +248,8 @@ axes[0].axis('off')
 
 # plot the attention maps
 for i in range(len(spt_attn_maps)):
-    axes[i+1].imshow(spt_attn_maps[i], cmap='viridis')
-    axes[i+1].set_title(f"Head: {i+1}")
+    axes[i+1].imshow(spt_attn_maps[i][0], cmap='viridis')
+    axes[i+1].set_title(f"Head Attention Sum: {spt_attn_maps[i][1]:.2f}")
     axes[i+1].axis('off')
 
 # turn off remaining plots
