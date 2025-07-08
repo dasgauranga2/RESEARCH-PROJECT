@@ -7,12 +7,17 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import json
 import random
+from tqdm import tqdm
+from torchvision import transforms
 
 # set device
 device = torch.device("cuda")
 
 # load the model
 yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
+
+# object to convert a Pytorch tensor into a PIL image
+to_pil = transforms.ToPILImage()
 
 # function to remove right-half of each segmentation mask
 def remove_right_half_mask(masks):
@@ -51,7 +56,7 @@ def draw_seg_mask(model, image_path):
     # check if no masks were found
     if results[0].masks is None or results[0].masks.data is None:
         print("NO OBJECT DETECTED")
-        return image_tensor
+        return image_tensor, image_tensor
 
     # get the segmentation masks
     masks = results[0].masks.data # shape: (N, H, W)
@@ -64,7 +69,7 @@ def draw_seg_mask(model, image_path):
         masks.unsqueeze(1),
         size=(H,W),
         mode='nearest'
-    ).squeeze().bool()
+    ).squeeze(1).bool()
 
     # modify the masks such that
     # the right-half is removed
@@ -88,46 +93,80 @@ def draw_seg_mask(model, image_path):
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
-# randomly select some images
-image_paths = []
-for sample in random.sample(data, 6):
-    image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+# # APPLY IMAGE CORRUPTION TO SOME IMAGES
+# # randomly select some images
+# image_paths = []
+# for sample in random.sample(data, 6):
+#     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
 
-# open the images
-images = []
-for image_path in image_paths:
-    images.append(Image.open(image_path).convert("RGB"))
+# # open the images
+# images = []
+# for image_path in image_paths:
+#     images.append(Image.open(image_path).convert("RGB"))
+
+# # draw segmentation masks on the images
+# corrupted_images1 = []
+# corrupted_images2 = []
+# for image_path in image_paths:
+#     corrupted_images = draw_seg_mask(yolo_model, image_path)
+
+#     corrupted_images1.append(corrupted_images[0])
+#     corrupted_images2.append(corrupted_images[1])
+
+# # figure for the original image and the corrupted images
+# fig, axes = plt.subplots(len(images), 3, figsize=(10, 20))
+# axes = axes.flatten()
+
+# for i in range(len(images)):
+
+#     # plot the original image
+#     axes[(i*3)].imshow(images[i])
+#     axes[(i*3)].set_title("Original Image")
+#     axes[(i*3)].axis('off')
+
+#     # plot the corrupted image
+#     axes[(i*3)+1].imshow(corrupted_images1[i].permute(1, 2, 0))
+#     axes[(i*3)+1].set_title(f"Custom Corruption")
+#     axes[(i*3)+1].axis('off')
+
+#     # plot the corrupted image
+#     axes[(i*3)+2].imshow(corrupted_images2[i].permute(1, 2, 0))
+#     axes[(i*3)+2].set_title(f"Custom Corruption")
+#     axes[(i*3)+2].axis('off')
+
+# # save the images
+# plt.savefig(f'mDPO/results/img_seg_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# plt.close()
+
+# APPLY IMAGE CORRUPTION TO THE ENTIRE DATASET
+# image paths
+image_paths = []
+# image names
+image_names = []
+for sample in tqdm(data, desc='Saving image paths and names'):
+    image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+    image_names.append(sample['img_path'])
+
+assert len(image_paths)==len(image_names), 'Different lengths'
 
 # draw segmentation masks on the images
 corrupted_images1 = []
 corrupted_images2 = []
-for image_path in image_paths:
+for image_path in tqdm(image_paths, desc='Drawing segmentation masks'):
     corrupted_images = draw_seg_mask(yolo_model, image_path)
-
     corrupted_images1.append(corrupted_images[0])
     corrupted_images2.append(corrupted_images[1])
 
-# figure for the original image and the corrupted images
-fig, axes = plt.subplots(len(images), 3, figsize=(10, 20))
-axes = axes.flatten()
-
-for i in range(len(images)):
-
-    # plot the original image
-    axes[(i*3)].imshow(images[i])
-    axes[(i*3)].set_title("Original Image")
-    axes[(i*3)].axis('off')
-
-    # plot the corrupted image
-    axes[(i*3)+1].imshow(corrupted_images1[i].permute(1, 2, 0))
-    axes[(i*3)+1].set_title(f"Custom Corruption")
-    axes[(i*3)+1].axis('off')
-
-    # plot the corrupted image
-    axes[(i*3)+2].imshow(corrupted_images2[i].permute(1, 2, 0))
-    axes[(i*3)+2].set_title(f"Custom Corruption")
-    axes[(i*3)+2].axis('off')
+assert len(image_paths)==len(corrupted_images1), 'Different lengths of corrupted images1'
+assert len(image_paths)==len(corrupted_images2), 'Different lengths of corrupted images2'
 
 # save the images
-plt.savefig(f'mDPO/results/img_seg_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+for i in tqdm(range(len(image_names)), desc='Saving images'):
+    pil_image1 = to_pil(corrupted_images1[i].squeeze())
+    pil_image2 = to_pil(corrupted_images2[i].squeeze())
+
+    save_path1 = 'mDPO/data/merged_images_corrupted1/' + image_names[i]
+    save_path2 = 'mDPO/data/merged_images_corrupted2/' + image_names[i]
+
+    pil_image1.save(save_path1)
+    pil_image2.save(save_path2)
