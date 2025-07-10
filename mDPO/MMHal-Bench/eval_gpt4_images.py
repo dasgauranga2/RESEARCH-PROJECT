@@ -2,11 +2,15 @@ from openai import OpenAI
 import argparse
 import json
 import time
+import re
 
 # RUN THIS SCRIPT USING THE FOLLOWING COMMAND -
 '''
-CUDA_VISIBLE_DEVICES=1 python MMHal-Bench/eval_gpt4.py --response ./MMHal-Bench/responses/mdpo_bunny_results.json --evaluation ./MMHal-Bench/gpt_evaluation/mdpo_eval_gpt4.json --gpt-model gpt-4.1-2025-04-14
+CUDA_VISIBLE_DEVICES=1 python MMHal-Bench/eval_gpt4_images.py --response ./MMHal-Bench/responses/mdpo_bunny_results.json --evaluation ./MMHal-Bench/gpt_evaluation/mdpo_eval_gpt4.json --gpt-model gpt-4.1-2025-04-14
 '''
+
+with open("./MMHal-Bench/api.txt", "r") as f:
+    API_KEY = f.read().strip()
 
 # client = OpenAI(
 #   api_key="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"
@@ -67,7 +71,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     client = OpenAI(
-        api_key="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"
+        api_key=API_KEY
     )
 
     # load json file
@@ -85,13 +89,6 @@ if __name__ == '__main__':
         # print(input_text)
 
         try:
-            # response = openai.ChatCompletion.create(
-            #     model=args.gpt_model,
-            #     messages=[
-            #         {"role": "user", "content": input_text}
-            #     ],
-            #     temperature=0.0,
-            # )
             response = client.chat.completions.create(
                 model=args.gpt_model,
                 #store=True,
@@ -105,40 +102,39 @@ if __name__ == '__main__':
             )
         except Exception as e:
             print(e)
-            print('Cannot generate response')
+            print('CANNOT GENERATE RESPONSE', end='\n')
             responses.append(("ERROR", record['model_answer']))
             continue
 
-        print(i, response.choices[0].message.content, flush=True)
+        print(i, response.choices[0].message.content, flush=True, end='\n')
         responses.append((response.choices[0].message.content, record['model_answer']))
         time.sleep(1)
 
-    # # save responses
-    # if args.evaluation is not None:
-    #     with open(args.evaluation, 'w') as f:
-    #         json.dump(responses, f, indent=4)
-
-    # analyze responses
+    # model response scores
     scores = []
     # output to be saved
     outputs = []
+    # iterate through the gpt evaluation responses
     for i, (gpt_response, model_response) in enumerate(responses):
         #response = response['choices'][0]['message']['content']
         gpt_response_clean = gpt_response.replace('**', '').lower()
-        scores_found = []
-        for s in range(7):
-            if f'rating: {s}' in gpt_response_clean.lower():
-                scores_found.append(s)
-        if len(scores_found) == 1:
-            scores.append(scores_found[0])
+        # use regular expression
+        # 'rating:' looks for this string
+        # '\s*' allows any number of whitespace or newline characters
+        # '([0-6])' looks for a digit between 0 and 6
+        match = re.search(r'rating:\s*([0-6])', gpt_response_clean)
+        if match:
+            # this retrieves the score
+            score = int(match.group(1))
+            scores.append(score)
             outputs.append({
                 'model_answer': model_response,
                 'gpt_evaluation': gpt_response,
-                'rating': scores_found[0]
+                'rating': score
             })
         else:
-            print('Warning: multiple or zero scores found')
-            print(i, gpt_response_clean)
+            print('WARNING: multiple or zero scores found')
+            print(i, gpt_response_clean, end='\n')
             scores.append(0)
             outputs.append({
                 'model_answer': model_response,
