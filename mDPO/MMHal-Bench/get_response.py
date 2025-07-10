@@ -6,6 +6,7 @@ import requests
 from PIL import Image
 import transformers
 from io import BytesIO
+from tqdm import tqdm
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -16,20 +17,17 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
-def load_image(image_file):
-    if image_file.startswith('http') or image_file.startswith('https'):
-        response = requests.get(image_file)
-        image = Image.open(BytesIO(response.content)).convert('RGB')
-    else:
-        image = Image.open(image_file).convert('RGB')
-    return image
+# function to load an image locally
+def load_image(image_src):
+    # extract the image name
+    image_name = image_src.split('/')[-1]
 
-# if __name__ == '__main__':
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument('--input', type=str, default='response_template.json', help='template file containing images and questions')
-#     parser.add_argument('--output', type=str, default='response_mymodel.json', help='output file containing model responses')
-#     parser.add_argument('--mymodel', type=str)
-#     args = parser.parse_args()
+    # path of image
+    image_path = './MMHal-Bench/images/' + image_name
+
+    image = Image.open(image_path).convert('RGB')
+    
+    return image
 
 # build the model using your own code
 model = AutoModelForCausalLM.from_pretrained(
@@ -39,7 +37,7 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True)
 
 # which model to use
-model_name = 'mdpo_bunny_ri'
+model_name = 'mdpo_bunny'
 # path of saved checkpoint
 checkpoint_path = f'./checkpoint/{model_name}'
 # determine if LoRA adapter weights should be used
@@ -91,9 +89,12 @@ def generate_response(image, question, eval_model):
     return response
 
 #print(json_data[0])
-for idx, line in enumerate(json_data):
+for idx, line in tqdm(enumerate(json_data), desc='Generating responses'):
     image_src = line['image_src']
     question = line['question']
+
+    # image = load_image(image_src)
+    # response = generate_response(image, question, model)
     try:
         image = load_image(image_src)
         response = generate_response(image, question, model)
