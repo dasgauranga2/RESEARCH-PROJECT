@@ -9,6 +9,7 @@ import json
 import random
 from tqdm import tqdm
 from torchvision import transforms
+import torchvision.transforms.v2 as v2
 
 # set device
 device = torch.device("cuda")
@@ -20,9 +21,10 @@ yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
 to_pil = transforms.ToPILImage()
 
 # function to remove right-half of each segmentation mask
-def remove_right_half_mask(masks):
-    masks_modified = masks.clone()
-    print(f"MASK SHAPE: {masks.shape}")
+def remove_half_mask(masks):
+    masks_modified1 = masks.clone()
+    masks_modified2 = masks.clone()
+    #print(f"MASK SHAPE: {masks.shape}")
 
     for i in range(masks.shape[0]):
         mask = masks[i]
@@ -39,13 +41,40 @@ def remove_right_half_mask(masks):
         x_mid = (x_min + x_max) // 2
 
         # Zero out the right half of the mask within its own bounding box
-        masks_modified[i, y_min:y_max+1, x_mid+1:x_max+1] = False
+        masks_modified1[i, y_min:y_max+1, x_mid+1:x_max+1] = False
+        # Zero out the left half of the mask within its own bounding box
+        masks_modified2[i, y_min:y_max+1, x_min+1:x_mid+1] = False
 
-    return masks_modified
+    return masks_modified1, masks_modified2
 
-# function to draw segmentation masks on an image
-def draw_seg_mask(model, image_path):
+# function to apply elastic warping on an image only on the segmented regions
+def apply_elastic_warping(image_tensor, masks, alpha=250.0):
+    # Ensure inputs are on CPU and detached
+    image_tensor = image_tensor.detach().cpu()
+    masks = masks.detach().cpu()
+
+    # Convert to float and scale to [0,1] for torchvision transforms
+    image = image_tensor.float() / 255.0
     
+    # Elastic transformer object
+    transformer = v2.ElasticTransform(alpha=alpha)
+
+    # Apply elastic transform to the full image
+    warped_image = transformer(image)
+
+    # Initialize final image as a copy of the original
+    final_image = image.clone()
+
+    # For each mask: apply only to the masked region
+    for i in range(masks.shape[0]):
+        mask = masks[i]  # (H, W)
+        final_image[:, mask] = warped_image[:, mask]
+
+    # Convert back to uint8
+    return (final_image * 255.0).to(torch.uint8)
+
+# function to draw segmentation masks on an image and corrupt the image
+def draw_seg_mask(model, image_path):
     # run inference on image
     results = model(image_path)
 
@@ -71,102 +100,112 @@ def draw_seg_mask(model, image_path):
         mode='nearest'
     ).squeeze(1).bool()
 
-    # modify the masks such that
-    # the right-half is removed
-    left_masks = remove_right_half_mask(masks)
+    # # modify the masks such that
+    # # the right-half and left-half is removed
+    # left_masks, right_masks = remove_half_mask(masks)
 
     # draw the segmentation masks
     image_with_masks = draw_segmentation_masks(image_tensor.cpu(),
                                             masks,
                                             alpha=0.5,
                                             colors=['blue']*masks.shape[0])
+
+
+    corrupted_image = apply_elastic_warping(image_tensor, masks, 100.0)
     
-     # draw the left-half segmentation masks
-    image_with_left_imasks = draw_segmentation_masks(image_tensor.cpu(),
-                                            left_masks,
-                                            alpha=0.5,
-                                            colors=['blue']*masks.shape[0])
+    # # draw the left-half segmentation masks
+    # image_with_left_imasks = draw_segmentation_masks(image_tensor.cpu(),
+    #                                         left_masks,
+    #                                         alpha=0.5,
+    #                                         colors=['blue']*masks.shape[0])
     
-    return image_with_masks, image_with_left_imasks
+    #  # draw the left-half segmentation masks
+    # image_with_right_imasks = draw_segmentation_masks(image_tensor.cpu(),
+    #                                         right_masks,
+    #                                         alpha=0.5,
+    #                                         colors=['blue']*masks.shape[0])
+    
+    return image_with_masks, corrupted_image
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
-# # APPLY IMAGE CORRUPTION TO SOME IMAGES
-# # randomly select some images
-# image_paths = []
-# for sample in random.sample(data, 6):
-#     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+# APPLY IMAGE CORRUPTION TO SOME IMAGES
+# randomly select some images
+image_paths = []
+for sample in random.sample(data, 6):
+    image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
 
-# # open the images
-# images = []
-# for image_path in image_paths:
-#     images.append(Image.open(image_path).convert("RGB"))
+# open the images
+images = []
+for image_path in image_paths:
+    images.append(Image.open(image_path).convert("RGB"))
+
+# draw segmentation masks on the images
+seg_images = []
+corrupted_images = []
+for image_path in image_paths:
+    result_images = draw_seg_mask(yolo_model, image_path)
+
+    seg_images.append(result_images[0])
+    corrupted_images.append(result_images[1])
+
+# figure for the original image and the corrupted images
+fig, axes = plt.subplots(len(images), 3, figsize=(15, 20))
+axes = axes.flatten()
+
+for i in range(len(images)):
+
+    # plot the original image
+    axes[(i*3)].imshow(images[i])
+    axes[(i*3)].set_title("Original Image")
+    axes[(i*3)].axis('off')
+
+    # plot the image with segmentation masks
+    axes[(i*3)+1].imshow(seg_images[i].permute(1, 2, 0))
+    axes[(i*3)+1].set_title(f"Segmentation Masks")
+    axes[(i*3)+1].axis('off')
+
+    # plot the corrupted image
+    axes[(i*3)+2].imshow(corrupted_images[i].permute(1, 2, 0))
+    axes[(i*3)+2].set_title(f"Corrupted Image")
+    axes[(i*3)+2].axis('off')
+
+# save the images
+plt.savefig(f'mDPO/results/img_seg_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
+
+
+# # APPLY IMAGE CORRUPTION TO THE ENTIRE DATASET
+# # image paths
+# image_paths = []
+# # image names
+# image_names = []
+# for sample in tqdm(data, desc='Saving image paths and names'):
+#     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+#     image_names.append(sample['img_path'])
+
+# assert len(image_paths)==len(image_names), 'Different lengths'
 
 # # draw segmentation masks on the images
 # corrupted_images1 = []
 # corrupted_images2 = []
-# for image_path in image_paths:
+# for image_path in tqdm(image_paths, desc='Drawing segmentation masks'):
 #     corrupted_images = draw_seg_mask(yolo_model, image_path)
-
 #     corrupted_images1.append(corrupted_images[0])
 #     corrupted_images2.append(corrupted_images[1])
 
-# # figure for the original image and the corrupted images
-# fig, axes = plt.subplots(len(images), 3, figsize=(10, 20))
-# axes = axes.flatten()
-
-# for i in range(len(images)):
-
-#     # plot the original image
-#     axes[(i*3)].imshow(images[i])
-#     axes[(i*3)].set_title("Original Image")
-#     axes[(i*3)].axis('off')
-
-#     # plot the corrupted image
-#     axes[(i*3)+1].imshow(corrupted_images1[i].permute(1, 2, 0))
-#     axes[(i*3)+1].set_title(f"Custom Corruption")
-#     axes[(i*3)+1].axis('off')
-
-#     # plot the corrupted image
-#     axes[(i*3)+2].imshow(corrupted_images2[i].permute(1, 2, 0))
-#     axes[(i*3)+2].set_title(f"Custom Corruption")
-#     axes[(i*3)+2].axis('off')
+# assert len(image_paths)==len(corrupted_images1), 'Different lengths of corrupted images1'
+# assert len(image_paths)==len(corrupted_images2), 'Different lengths of corrupted images2'
 
 # # save the images
-# plt.savefig(f'mDPO/results/img_seg_corruption.png', bbox_inches='tight', pad_inches=0, dpi=300)
-# plt.close()
+# for i in tqdm(range(len(image_names)), desc='Saving images'):
+#     pil_image1 = to_pil(corrupted_images1[i].squeeze())
+#     pil_image2 = to_pil(corrupted_images2[i].squeeze())
 
-# APPLY IMAGE CORRUPTION TO THE ENTIRE DATASET
-# image paths
-image_paths = []
-# image names
-image_names = []
-for sample in tqdm(data, desc='Saving image paths and names'):
-    image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
-    image_names.append(sample['img_path'])
+#     save_path1 = 'mDPO/data/merged_images_corrupted1/' + image_names[i]
+#     save_path2 = 'mDPO/data/merged_images_corrupted2/' + image_names[i]
 
-assert len(image_paths)==len(image_names), 'Different lengths'
-
-# draw segmentation masks on the images
-corrupted_images1 = []
-corrupted_images2 = []
-for image_path in tqdm(image_paths, desc='Drawing segmentation masks'):
-    corrupted_images = draw_seg_mask(yolo_model, image_path)
-    corrupted_images1.append(corrupted_images[0])
-    corrupted_images2.append(corrupted_images[1])
-
-assert len(image_paths)==len(corrupted_images1), 'Different lengths of corrupted images1'
-assert len(image_paths)==len(corrupted_images2), 'Different lengths of corrupted images2'
-
-# save the images
-for i in tqdm(range(len(image_names)), desc='Saving images'):
-    pil_image1 = to_pil(corrupted_images1[i].squeeze())
-    pil_image2 = to_pil(corrupted_images2[i].squeeze())
-
-    save_path1 = 'mDPO/data/merged_images_corrupted1/' + image_names[i]
-    save_path2 = 'mDPO/data/merged_images_corrupted2/' + image_names[i]
-
-    pil_image1.save(save_path1)
-    pil_image2.save(save_path2)
+#     pil_image1.save(save_path1)
+#     pil_image2.save(save_path2)
