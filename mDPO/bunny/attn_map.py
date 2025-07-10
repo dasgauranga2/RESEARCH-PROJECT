@@ -48,7 +48,14 @@ ref_model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True)
 
 # function to load a model from the checkpoint name
-def load_model(base_model, name):
+def load_model(name):
+    # load the reference model
+    base_model = AutoModelForCausalLM.from_pretrained(
+        'BAAI/Bunny-v1_0-3B',
+        torch_dtype=torch.float16, # float32 for cpu
+        device_map='auto',
+        trust_remote_code=True)
+    
     # path of saved checkpoint
     checkpoint_path = f'./checkpoint/{name}'
 
@@ -100,17 +107,10 @@ def load_model(base_model, name):
 
 #print(model.get_vision_tower().is_loaded)
 
-# load the tokenizer
-tokenizer = transformers.AutoTokenizer.from_pretrained(
-    "BAAI/Bunny-v1_0-3B",
-    # cache_dir=training_args.cache_dir,
-    model_max_length=2048,
-    padding_side="right",
-    use_fast=False,
-    trust_remote_code=True,
-)
-# set the padding token
-tokenizer.pad_token_id = tokenizer.eos_token_id
+# load the model tokenizer
+tokenizer = AutoTokenizer.from_pretrained(
+    './checkpoint/mdpo_bunny',
+    trust_remote_code=True)
 
 # processes a single data point
 def prepare_inputs(prompt, tokenizer):
@@ -196,6 +196,32 @@ image_path = './data/test/count2.jpg'
 # query = "How many traffic signs in the image?"
 # # image path
 # image_path = './data/test/count9.jpg'
+
+# function to generate the model's response
+def generate_response(question, img_tensor, tokenizer, model):
+    # prompt text
+    text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{question} ASSISTANT:"
+    text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
+    input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
+
+    # # load the image
+    # #image = Image.open('./AMBER/data/image/' + data['image']).convert('RGB')
+    # image = Image.open(path).convert('RGB')
+    # image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
+
+    # generate the model outputs
+    output_ids = model.generate(
+        input_ids,
+        images=img_tensor,
+        max_new_tokens=150,
+        use_cache=True,
+        repetition_penalty=1.0 # increase this to avoid chattering
+    )[0]
+
+    # get the generated text
+    response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip()
+
+    return response
 
 # function to calculate the attention sum of each head 
 # corresponding to the image tokens
@@ -356,10 +382,13 @@ orig_image_cropped = orig_image_resized.crop(crop_box)
 
 for i, model_name in enumerate(model_names):
     # load the model from the checkpoint name
-    model = load_model(ref_model, model_name)
+    model = load_model(model_name)
 
     # generate spatial attention map
     spt_attn_maps = spatial_attention_map(query, image_tensor, tokenizer, model)
+
+    # generate the model's response
+    response = generate_response(query, image_tensor, tokenizer, model)
 
     cols = 5
     rows = (len(spt_attn_maps)+cols) // cols
@@ -384,7 +413,7 @@ for i, model_name in enumerate(model_names):
     for j in range(len(spt_attn_maps)+1, len(axes)):
         axes[j].axis('off')
 
-    plt.suptitle(f"Query: {query}\nModel Name: {model_name}", fontsize=10)
+    plt.suptitle(f"Query: {query}\nModel Name: {model_name}\nAnswer: {response}", fontsize=10)
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(f'./results/spatial_attn_map{i+1}.png', bbox_inches='tight', pad_inches=0, dpi=300)
     plt.close()
