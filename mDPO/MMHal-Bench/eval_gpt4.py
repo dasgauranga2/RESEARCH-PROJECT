@@ -8,6 +8,9 @@ import time
 CUDA_VISIBLE_DEVICES=1 python MMHal-Bench/eval_gpt4.py --response ./MMHal-Bench/responses/mdpo_bunny_results.json --evaluation ./MMHal-Bench/gpt_evaluation/mdpo_eval_gpt4.json --gpt-model gpt-4.1-2025-04-14
 '''
 
+with open("./MMHal-Bench/api.txt", "r") as f:
+    API_KEY = f.read().strip()
+
 # client = OpenAI(
 #   api_key="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"
 # )
@@ -101,7 +104,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     client = OpenAI(
-        api_key="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"
+        api_key=API_KEY
     )
 
     # load json file
