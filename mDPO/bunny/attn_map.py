@@ -20,7 +20,7 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
-# CALCULATE THE RELATIVE ATTENTION MAP
+# CALCULATE THE ATTENTION MAP
 # WHICH SHOWS WHERE THE MULTIMODAL LLM IS LOOKING AT THE IMAGE WHEN ANSWERING A QUESTION
 
 # BUNNY PROCESSES THE INPUT IMAGE IN THE FOLLOWING STEPS
@@ -30,19 +30,45 @@ torch.set_default_device(device)
 # 4. THE PATCHES EMBEDDINGS ARE GIVEN TO A 2-LAYER MLP THAT TRANSFORMS EACH PATCH EMBEDDING INTO THE LLM'S INPUT EMBEDDING SPACE (CROSS-MODALITY PROJECTOR)
 # NOTE: IN BUNNY THE THE CROSS-MODALITY PROJECTOR RECEIVES AS INPUT 729 TOKENS AND OUTPUTS 729 TOKENS
 
-# variable to decide which checkpoint to use
-model_name = 'mdpo_bunny'
+# variable to decide which checkpoints to use
+model_names = [
+    'mdpo_bunny',
+    'mdpo_bunny_cni',
+    'mdpo_bunny_dci',
+]
+#model_name = 'mdpo_bunny'
+#model_name = 'mdpo_bunny_dci'
 #model_name = 'mdpo_bunny_cni'
 
 # load the reference model
-model = AutoModelForCausalLM.from_pretrained(
+ref_model = AutoModelForCausalLM.from_pretrained(
     'BAAI/Bunny-v1_0-3B',
     torch_dtype=torch.float16, # float32 for cpu
     device_map='auto',
     trust_remote_code=True)
 
-# path of saved checkpoint
-checkpoint_path = f'./checkpoint/{model_name}'
+# function to load a model from the checkpoint name
+def load_model(base_model, name):
+    # path of saved checkpoint
+    checkpoint_path = f'./checkpoint/{name}'
+
+    model = PeftModel.from_pretrained(
+        base_model,
+        checkpoint_path
+    )
+
+    model = model.merge_and_unload()
+
+    # load the vision tower
+    model.get_vision_tower().load_model()
+
+    # set model to evaluation mode
+    model.eval()
+
+    return model
+
+# # path of saved checkpoint
+# checkpoint_path = f'./checkpoint/{model_name}'
 
 # vision_tower = model.get_vision_tower()
 # num_patches  = vision_tower.num_patches
@@ -51,33 +77,40 @@ checkpoint_path = f'./checkpoint/{model_name}'
 # print(num_patches)
 # print(patch_grid_N)
 
-# determine if LoRA adapter weights should be used
-if model_name is None:
-    use_lora = False
-else:
-    use_lora = True
+# # determine if LoRA adapter weights should be used
+# if model_name is None:
+#     use_lora = False
+# else:
+#     use_lora = True
 
-if use_lora:
+# if use_lora:
 
-    model = PeftModel.from_pretrained(
-        model,
-        checkpoint_path
-    )
+#     model = PeftModel.from_pretrained(
+#         model,
+#         checkpoint_path
+#     )
 
-    model = model.merge_and_unload()
+#     model = model.merge_and_unload()
 
-# load the vision tower
-model.get_vision_tower().load_model()
+# # load the vision tower
+# model.get_vision_tower().load_model()
 
-# set model to evaluation mode
-model.eval()
+# # set model to evaluation mode
+# model.eval()
 
 #print(model.get_vision_tower().is_loaded)
 
-# load the model tokenizer
-tokenizer = AutoTokenizer.from_pretrained(
-    checkpoint_path,
-    trust_remote_code=True)
+# load the tokenizer
+tokenizer = transformers.AutoTokenizer.from_pretrained(
+    "BAAI/Bunny-v1_0-3B",
+    # cache_dir=training_args.cache_dir,
+    model_max_length=2048,
+    padding_side="right",
+    use_fast=False,
+    trust_remote_code=True,
+)
+# set the padding token
+tokenizer.pad_token_id = tokenizer.eos_token_id
 
 # processes a single data point
 def prepare_inputs(prompt, tokenizer):
@@ -124,15 +157,15 @@ def prepare_inputs(prompt, tokenizer):
 
     return batch
 
-# user query
-query = "How many traffic lights are there in the image?"
-# image path
-image_path = './data/test/count1.jpg'
-
 # # user query
-# query = "How many bicycles are there in the image?"
+# query = "How many traffic lights are there in the image?"
 # # image path
-# image_path = './data/test/count2.jpg'
+# image_path = './data/test/count1.jpg'
+
+# user query
+query = "How many bicycles are there in the image?"
+# image path
+image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
@@ -169,68 +202,68 @@ image_path = './data/test/count1.jpg'
 def attention_sums(img_attn_scores):
     return img_attn_scores.sum(dim=1)
 
-# function to calculate the spatial entropy
-# from a spatial attention map
-def spatial_entropy(attn_map):
-    # calculate the mean threshold
-    mean_val = np.mean(attn_map)
-    # compute the binarized attention map
-    binarized_attn_map = np.where(attn_map > mean_val, 1, 0)
+# # function to calculate the spatial entropy
+# # from a spatial attention map
+# def spatial_entropy(attn_map):
+#     # calculate the mean threshold
+#     mean_val = np.mean(attn_map)
+#     # compute the binarized attention map
+#     binarized_attn_map = np.where(attn_map > mean_val, 1, 0)
 
-    # keep track of cells visited for dfs
-    visited = np.full_like(binarized_attn_map, False, dtype=bool)
-    # lengths of connected components
-    connected_components = {}
-    # index of each connected component
-    cci = 0
-    # total number of connected component cells
-    total_cc = 0
+#     # keep track of cells visited for dfs
+#     visited = np.full_like(binarized_attn_map, False, dtype=bool)
+#     # lengths of connected components
+#     connected_components = {}
+#     # index of each connected component
+#     cci = 0
+#     # total number of connected component cells
+#     total_cc = 0
 
-    # function to perform dfs to find number of connected components
-    def dfs(i, j, idx):
-        if i < 0 or i >= len(visited) or j < 0 or j >= len(visited[0]):
-            return
-        if visited[i][j]: # if cell is visited
-            return
-        if binarized_attn_map[i][j] == 0: # if cell is 0
-            return
+#     # function to perform dfs to find number of connected components
+#     def dfs(i, j, idx):
+#         if i < 0 or i >= len(visited) or j < 0 or j >= len(visited[0]):
+#             return
+#         if visited[i][j]: # if cell is visited
+#             return
+#         if binarized_attn_map[i][j] == 0: # if cell is 0
+#             return
 
-        visited[i][j] = True
-        nonlocal total_cc
-        total_cc += 1
-        if idx not in connected_components:
-            connected_components[idx] = 1
-        else:
-            connected_components[idx] += 1
+#         visited[i][j] = True
+#         nonlocal total_cc
+#         total_cc += 1
+#         if idx not in connected_components:
+#             connected_components[idx] = 1
+#         else:
+#             connected_components[idx] += 1
 
-        dfs(i, j+1, idx)
-        dfs(i, j-1, idx)
-        dfs(i+1, j, idx)
-        dfs(i-1, j, idx)
-        dfs(i+1, j+1, idx)
-        dfs(i-1, j+1, idx)
-        dfs(i+1, j-1, idx)
-        dfs(i-1, j-1, idx)
+#         dfs(i, j+1, idx)
+#         dfs(i, j-1, idx)
+#         dfs(i+1, j, idx)
+#         dfs(i-1, j, idx)
+#         dfs(i+1, j+1, idx)
+#         dfs(i-1, j+1, idx)
+#         dfs(i+1, j-1, idx)
+#         dfs(i-1, j-1, idx)
     
-    # perform dfs to identify size of each connected component
-    for i in range(len(visited)):
-        for j in range(len(visited[0])):
-            if binarized_attn_map[i][j] == 1 and not visited[i][j]:
-                dfs(i, j, cci)
-                cci += 1
+#     # perform dfs to identify size of each connected component
+#     for i in range(len(visited)):
+#         for j in range(len(visited[0])):
+#             if binarized_attn_map[i][j] == 1 and not visited[i][j]:
+#                 dfs(i, j, cci)
+#                 cci += 1
     
-    # calculate the spatial entropy
-    entropy = 0
-    for ccs in connected_components.values():
-        # probability of connected components
-        pcn = ccs / total_cc
+#     # calculate the spatial entropy
+#     entropy = 0
+#     for ccs in connected_components.values():
+#         # probability of connected components
+#         pcn = ccs / total_cc
 
-        entropy = entropy - (pcn * np.log(pcn))
+#         entropy = entropy - (pcn * np.log(pcn))
     
-    return entropy
+#     return entropy
 
 # function to calculate the spatial attention maps for each head
-def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = -1):
+def spatial_attention_map(question, img_tensor, tokenizer, model):
     # list to store attention maps for each head
     all_sam = []
 
@@ -252,8 +285,24 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
         return_dict=True
     )
 
-    # get the attention scores from a particular layer
-    #att_scores = outputs.attentions[layer_index].squeeze() # (heads, 781, 781)
+    # # index position where the first image token is located
+    # image_token_pos = data["prompt_input_ids"].index(-200)
+
+    # for lh in localization_heads:
+    #     # when predicting the first answer token
+    #     # extract the attention scores to the image tokens
+    #     # for a particular layer
+    #     ans_img_attn_scores = outputs.attentions[lh[0]].squeeze()[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
+
+    #     # exrtract the attention scores for a particular head
+    #     ans_img_attn_score = ans_img_attn_scores[lh[1]]
+
+    #     # reshape to 27 x 27 (no. of patches) to get the spatial attention map
+    #     spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
+
+    #     all_sam.append((spatial_attn_map, lh[0], lh[1]))
+    
+    # return all_sam
 
     # number of layers
     num_layers = len(outputs.attentions)
@@ -270,60 +319,72 @@ def spatial_attention_map(question, img_tensor, tokenizer, model, layer_index = 
         # calculate the attention sum for each head
         ans_img_attn_sums = attention_sums(ans_img_attn_scores) # (heads,)
 
-        for ans_img_attn_score, ans_img_attn_sum in zip(ans_img_attn_scores, ans_img_attn_sums):
+        for i, (ans_img_attn_score, ans_img_attn_sum) in enumerate(zip(ans_img_attn_scores, ans_img_attn_sums)):
             # reshape to 27 x 27 (no. of patches) to get the spatial attention map
             spatial_attn_map = ans_img_attn_score.reshape(27, 27).cpu().detach().numpy()
 
-            # calculate the spatial entropy of each attention map
-            sp_entropy = spatial_entropy(spatial_attn_map)
+            # # calculate the spatial entropy of each attention map
+            # entropy = spatial_entropy(spatial_attn_map)
 
-            all_sam.append((spatial_attn_map, ans_img_attn_sum, sp_entropy))
-
-    # keep
+            all_sam.append((spatial_attn_map, ans_img_attn_sum, layer, i))
+    
     all_sam.sort(key=lambda x:x[1], reverse=True)
 
-    return all_sam[:20]
+    # # keep only those attention maps which have high attention map scores
+    # all_sam = [attn_map for attn_map in all_sam if attn_map[1] > 0.2]
 
-# transformer layer index
-layer_index = -1
+    # # sort the attention maps by spatial entropy
+    # all_sam.sort(key=lambda x:x[2])
+    # # take the top-10
+    # all_sam = all_sam[:10]
+
+    return all_sam[:20]
 
 # reopen the original image
 orig_image = Image.open(image_path)
 #orig_image = corrupt_image(Image.open(image_path))
 # process the image into a tensor
-image_tensor = model.process_images([orig_image], model.config).to(dtype=model.dtype)
+image_tensor = ref_model.process_images([orig_image], ref_model.config).to(dtype=ref_model.dtype)
 # resize the image
 orig_image_resized = orig_image.convert('RGB').resize((384, 384))
 # crop the upper-left portion of the image
 crop_box = (0, 0, 378, 378)  # (left, upper, right, lower)
 orig_image_cropped = orig_image_resized.crop(crop_box)
 
-# generate spatial attention map of mdpo
-spt_attn_maps = spatial_attention_map(query, image_tensor, tokenizer, model, layer_index)
+# # mDPO localization heads
+# mdpo_lh = [(20,22), (22,13), (31,22), (14,20), (18,8), (25,18), (31,0), (21,14), (27,1), (22,11)]
 
-cols = 4
-rows = (len(spt_attn_maps)+cols) // cols
+for i, model_name in enumerate(model_names):
+    # load the model from the checkpoint name
+    model = load_model(ref_model, model_name)
 
-# figure for the original image and the attention maps
-fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
-axes = axes.flatten()
+    # generate spatial attention map
+    spt_attn_maps = spatial_attention_map(query, image_tensor, tokenizer, model)
 
-# plot the original image
-axes[0].imshow(orig_image_cropped)
-axes[0].set_title("Original Image")
-axes[0].axis('off')
+    cols = 5
+    rows = (len(spt_attn_maps)+cols) // cols
 
-# plot the attention maps
-for i in range(len(spt_attn_maps)):
-    axes[i+1].imshow(spt_attn_maps[i][0], cmap='viridis')
-    axes[i+1].set_title(f"Head Attention Sum: {spt_attn_maps[i][1]:.2f}\nHead Spatial Entropy: {spt_attn_maps[i][2]:.2f}")
-    axes[i+1].axis('off')
+    # figure for the original image and the attention maps
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
+    axes = axes.flatten()
 
-# turn off remaining plots
-for i in range(len(spt_attn_maps)+1, len(axes)):
-    axes[i].axis('off')
+    # plot the original image
+    axes[0].imshow(orig_image_cropped)
+    axes[0].set_title("Original Image")
+    axes[0].axis('off')
 
-plt.suptitle(f"Query: {query}\nModel Name: {model_name}", fontsize=10)
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.savefig(f'./results/spatial_attn_map.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+    # plot the attention maps
+    for j in range(len(spt_attn_maps)):
+        axes[j+1].imshow(spt_attn_maps[j][0], cmap='viridis')
+        #axes[i+1].set_title(f"Layer: {spt_attn_maps[j][1]}\nHead: {spt_attn_maps[j][2]}")
+        axes[j+1].set_title(f"Layer: {spt_attn_maps[j][2]}\nHead: {spt_attn_maps[j][3]}")
+        axes[j+1].axis('off')
+
+    # turn off remaining plots
+    for j in range(len(spt_attn_maps)+1, len(axes)):
+        axes[j].axis('off')
+
+    plt.suptitle(f"Query: {query}\nModel Name: {model_name}", fontsize=10)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(f'./results/spatial_attn_map{i+1}.png', bbox_inches='tight', pad_inches=0, dpi=300)
+    plt.close()
