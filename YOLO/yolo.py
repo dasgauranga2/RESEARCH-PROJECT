@@ -10,6 +10,7 @@ import random
 from tqdm import tqdm
 from torchvision import transforms
 import torchvision.transforms.v2 as v2
+import random
 
 # set device
 device = torch.device("cuda")
@@ -48,16 +49,20 @@ def remove_half_mask(masks):
     return masks_modified1, masks_modified2
 
 # function to apply elastic warping on an image only on the segmented regions
-def apply_elastic_warping(image_tensor, masks, alpha=250.0):
+def apply_elastic_warping(image_tensor, masks):
     # Ensure inputs are on CPU and detached
     image_tensor = image_tensor.detach().cpu()
     masks = masks.detach().cpu()
 
     # Convert to float and scale to [0,1] for torchvision transforms
     image = image_tensor.float() / 255.0
+
+    # elastic warping parameters
+    alpha = random.uniform(300.0, 400.0)
+    sigma = random.uniform(5.0, 10.0)
     
     # Elastic transformer object
-    transformer = v2.ElasticTransform(alpha=alpha)
+    transformer = v2.ElasticTransform(alpha=alpha, sigma=sigma)
 
     # Apply elastic transform to the full image
     warped_image = transformer(image)
@@ -73,9 +78,24 @@ def apply_elastic_warping(image_tensor, masks, alpha=250.0):
     # Convert back to uint8
     return (final_image * 255.0).to(torch.uint8)
 
+# function to filter large masks
+def filter_large_masks(masks):
+    # dimensions of masks
+    _, H, W = masks.shape
+    # total area of each
+    total_area = H * W
+
+    # Compute area for each mask (i.e., number of True pixels)
+    mask_areas = masks.flatten(1).sum(dim=1)
+
+    # Keep masks whose area is below threshold
+    keep = mask_areas < (0.6 * total_area)
+
+    return masks[keep]
+
 # function to draw segmentation masks on an image and corrupt the image
 def draw_seg_mask(model, image_path):
-    # run inference on image
+    # run image-segmentation
     results = model(image_path)
 
     # load the image
@@ -109,9 +129,12 @@ def draw_seg_mask(model, image_path):
                                             masks,
                                             alpha=0.5,
                                             colors=['blue']*masks.shape[0])
+    
+    # filter the masks
+    masks = filter_large_masks(masks)
 
-
-    corrupted_image = apply_elastic_warping(image_tensor, masks, 100.0)
+    # corrupt the image
+    corrupted_image = apply_elastic_warping(image_tensor, masks)
     
     # # draw the left-half segmentation masks
     # image_with_left_imasks = draw_segmentation_masks(image_tensor.cpu(),
@@ -134,7 +157,7 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
 # APPLY IMAGE CORRUPTION TO SOME IMAGES
 # randomly select some images
 image_paths = []
-for sample in random.sample(data, 6):
+for sample in random.sample(data, 4):
     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
 
 # open the images
@@ -142,7 +165,7 @@ images = []
 for image_path in image_paths:
     images.append(Image.open(image_path).convert("RGB"))
 
-# draw segmentation masks on the images
+# draw segmentation masks on the images and corrupt them
 seg_images = []
 corrupted_images = []
 for image_path in image_paths:
