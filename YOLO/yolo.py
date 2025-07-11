@@ -21,32 +21,32 @@ yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
 # object to convert a Pytorch tensor into a PIL image
 to_pil = transforms.ToPILImage()
 
-# function to remove right-half of each segmentation mask
-def remove_half_mask(masks):
-    masks_modified1 = masks.clone()
-    masks_modified2 = masks.clone()
-    #print(f"MASK SHAPE: {masks.shape}")
+# # function to remove right-half of each segmentation mask
+# def remove_half_mask(masks):
+#     masks_modified1 = masks.clone()
+#     masks_modified2 = masks.clone()
+#     #print(f"MASK SHAPE: {masks.shape}")
 
-    for i in range(masks.shape[0]):
-        mask = masks[i]
-        # Get bounding box of the mask
-        rows = torch.any(mask, dim=1)
-        cols = torch.any(mask, dim=0)
-        if not rows.any() or not cols.any():
-            continue  # skip empty mask
+#     for i in range(masks.shape[0]):
+#         mask = masks[i]
+#         # Get bounding box of the mask
+#         rows = torch.any(mask, dim=1)
+#         cols = torch.any(mask, dim=0)
+#         if not rows.any() or not cols.any():
+#             continue  # skip empty mask
 
-        y_min, y_max = rows.nonzero()[0].item(), rows.nonzero()[-1].item()
-        x_min, x_max = cols.nonzero()[0].item(), cols.nonzero()[-1].item()
+#         y_min, y_max = rows.nonzero()[0].item(), rows.nonzero()[-1].item()
+#         x_min, x_max = cols.nonzero()[0].item(), cols.nonzero()[-1].item()
 
-        # Compute vertical middle of the detected region
-        x_mid = (x_min + x_max) // 2
+#         # Compute vertical middle of the detected region
+#         x_mid = (x_min + x_max) // 2
 
-        # Zero out the right half of the mask within its own bounding box
-        masks_modified1[i, y_min:y_max+1, x_mid+1:x_max+1] = False
-        # Zero out the left half of the mask within its own bounding box
-        masks_modified2[i, y_min:y_max+1, x_min+1:x_mid+1] = False
+#         # Zero out the right half of the mask within its own bounding box
+#         masks_modified1[i, y_min:y_max+1, x_mid+1:x_max+1] = False
+#         # Zero out the left half of the mask within its own bounding box
+#         masks_modified2[i, y_min:y_max+1, x_min+1:x_mid+1] = False
 
-    return masks_modified1, masks_modified2
+#     return masks_modified1, masks_modified2
 
 # function to apply elastic warping on an image only on the segmented regions
 def apply_elastic_warping(image_tensor, masks):
@@ -93,62 +93,74 @@ def filter_large_masks(masks):
 
     return masks[keep]
 
+# transform to resize an image
+resize_transform = v2.Compose([
+    v2.Resize((640, 640)),
+])
+
 # function to draw segmentation masks on an image and corrupt the image
-def draw_seg_mask(model, image_path):
-    # run image-segmentation
-    results = model(image_path)
+def draw_seg_mask(model, image_paths):
+    # load the images
+    images = [Image.open(image_path).convert("RGB") for image_path in image_paths]
+    # resized images
+    resized_images = [resize_transform(image) for image in images]
+    # convert to image tensors
+    image_tensors = [to_tensor(image).mul(255).to(torch.uint8) for image in resized_images]  # shape: (C, H, W)
 
-    # load the image
-    image = Image.open(image_path).convert("RGB")
-    image_tensor = to_tensor(image).mul(255).to(torch.uint8)  # shape: (C, H, W)
-
-    # check if no masks were found
-    if results[0].masks is None or results[0].masks.data is None:
-        print("NO OBJECT DETECTED")
-        return image_tensor, image_tensor
-
-    # get the segmentation masks
-    masks = results[0].masks.data # shape: (N, H, W)
-
-    # dimensions of image
-    _, H, W = image_tensor.shape
-
-    # scale the masks to original scale
-    masks = F.interpolate(
-        masks.unsqueeze(1),
-        size=(H,W),
-        mode='nearest'
-    ).squeeze(1).bool()
-
-    # # modify the masks such that
-    # # the right-half and left-half is removed
-    # left_masks, right_masks = remove_half_mask(masks)
-
-    # draw the segmentation masks
-    image_with_masks = draw_segmentation_masks(image_tensor.cpu(),
-                                            masks,
-                                            alpha=0.5,
-                                            colors=['blue']*masks.shape[0])
+    # run image-segmentation on batch of images
+    results = model(resized_images)
+    #results = [model(image_path)[0] for image_path in image_paths]
     
-    # filter the masks
-    masks = filter_large_masks(masks)
+    # list of images with segmentation masks
+    segmented_images = []
+    # list of images with elastic warping applied on the segmented regions
+    corrupted_images = []
 
-    # corrupt the image
-    corrupted_image = apply_elastic_warping(image_tensor, masks)
+    for image_tensor, result in zip(image_tensors, results):
+        # check if no masks were found
+        if result.masks is None or result.masks.data is None:
+            print("NO OBJECT DETECTED")
+            segmented_images.append(image_tensor)
+            corrupted_images.append(image_tensor)
+            continue
+
+        # get the segmentation masks
+        masks = result.masks.data.bool() # shape: (N, H, W)
+
+        # # modify the masks such that
+        # # the right-half and left-half is removed
+        # left_masks, right_masks = remove_half_mask(masks)
+
+        # draw the segmentation masks
+        image_with_masks = draw_segmentation_masks(image_tensor.cpu(),
+                                                masks,
+                                                alpha=0.5,
+                                                colors=['blue']*masks.shape[0])
+        
+        segmented_images.append(image_with_masks)
+        
+        # filter the masks
+        masks = filter_large_masks(masks)
+
+        # corrupt the image
+        corrupted_image = apply_elastic_warping(image_tensor, masks)
+
+        corrupted_images.append(corrupted_image)
+        
+        # # draw the left-half segmentation masks
+        # image_with_left_imasks = draw_segmentation_masks(image_tensor.cpu(),
+        #                                         left_masks,
+        #                                         alpha=0.5,
+        #                                         colors=['blue']*masks.shape[0])
+        
+        #  # draw the left-half segmentation masks
+        # image_with_right_imasks = draw_segmentation_masks(image_tensor.cpu(),
+        #                                         right_masks,
+        #                                         alpha=0.5,
+        #                                         colors=['blue']*masks.shape[0])
     
-    # # draw the left-half segmentation masks
-    # image_with_left_imasks = draw_segmentation_masks(image_tensor.cpu(),
-    #                                         left_masks,
-    #                                         alpha=0.5,
-    #                                         colors=['blue']*masks.shape[0])
-    
-    #  # draw the left-half segmentation masks
-    # image_with_right_imasks = draw_segmentation_masks(image_tensor.cpu(),
-    #                                         right_masks,
-    #                                         alpha=0.5,
-    #                                         colors=['blue']*masks.shape[0])
-    
-    return image_with_masks, corrupted_image
+
+    return segmented_images, corrupted_images
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
@@ -166,13 +178,7 @@ for image_path in image_paths:
     images.append(Image.open(image_path).convert("RGB"))
 
 # draw segmentation masks on the images and corrupt them
-seg_images = []
-corrupted_images = []
-for image_path in image_paths:
-    result_images = draw_seg_mask(yolo_model, image_path)
-
-    seg_images.append(result_images[0])
-    corrupted_images.append(result_images[1])
+seg_images, corrupted_images = draw_seg_mask(yolo_model, image_paths)
 
 # figure for the original image and the corrupted images
 fig, axes = plt.subplots(len(images), 3, figsize=(15, 20))
@@ -211,24 +217,19 @@ plt.close()
 
 # assert len(image_paths)==len(image_names), 'Different lengths'
 
-# # draw segmentation masks on the images
-# corrupted_images1 = []
-# corrupted_images2 = []
-# for image_path in tqdm(image_paths, desc='Drawing segmentation masks'):
-#     corrupted_images = draw_seg_mask(yolo_model, image_path)
-#     corrupted_images1.append(corrupted_images[0])
-#     corrupted_images2.append(corrupted_images[1])
+# # get the corrupted images
+# corrupted_images = []
+# for image_path in image_paths:
+#     result_images = draw_seg_mask(yolo_model, image_path)
+    
+#     corrupted_images.append(result_images[1])
 
-# assert len(image_paths)==len(corrupted_images1), 'Different lengths of corrupted images1'
-# assert len(image_paths)==len(corrupted_images2), 'Different lengths of corrupted images2'
+# assert len(image_paths)==len(corrupted_images), 'Different lengths of corrupted images1'
 
 # # save the images
 # for i in tqdm(range(len(image_names)), desc='Saving images'):
-#     pil_image1 = to_pil(corrupted_images1[i].squeeze())
-#     pil_image2 = to_pil(corrupted_images2[i].squeeze())
+#     pil_image = to_pil(corrupted_images[i].squeeze())
 
-#     save_path1 = 'mDPO/data/merged_images_corrupted1/' + image_names[i]
-#     save_path2 = 'mDPO/data/merged_images_corrupted2/' + image_names[i]
+#     save_path = 'mDPO/data/merged_images_corrupted/' + image_names[i]
 
-#     pil_image1.save(save_path1)
-#     pil_image2.save(save_path2)
+#     pil_image.save(save_path)
