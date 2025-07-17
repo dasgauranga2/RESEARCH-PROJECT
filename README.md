@@ -2,7 +2,7 @@
 
 [**🤗 mDPO Dataset**](https://huggingface.co/datasets/fwnlp/mDPO-preference-data)
 
-## Explanation
-We use image segmentation to create dual corrupted images
+## Description
+We use image segmentation to corrupt the original image only on the segmented regions
 
 ![alt text](mDPO/results/img_seg_corruption.png)
