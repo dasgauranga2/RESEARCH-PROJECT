@@ -155,25 +155,11 @@ def draw_seg_mask(model, image_paths):
         colours = random.choices(['red', 'blue', 'green', 'yellow'], k=masks.shape[0])
 
         if i==0:
-            corrupted_image1 = draw_segmentation_masks(image_tensor.cpu(),
-                                                    half_masks1[0],
-                                                    alpha=0.4,
-                                                    colors=colours)
-            
-            corrupted_image2 = draw_segmentation_masks(image_tensor.cpu(),
-                                                    half_masks2[0],
-                                                    alpha=0.4,
-                                                    colors=colours)
+            corrupted_image1 = apply_elastic_warping(image_tensor, half_masks1[0])
+            corrupted_image2 = apply_elastic_warping(image_tensor, half_masks2[0])
         else:
-            corrupted_image1 = draw_segmentation_masks(image_tensor.cpu(),
-                                                    half_masks2[1],
-                                                    alpha=0.4,
-                                                    colors=colours)
-            
-            corrupted_image2 = draw_segmentation_masks(image_tensor.cpu(),
-                                                    half_masks1[1],
-                                                    alpha=0.4,
-                                                    colors=colours)
+            corrupted_image1 = apply_elastic_warping(image_tensor, half_masks2[1])
+            corrupted_image2 = apply_elastic_warping(image_tensor, half_masks1[1])
 
         corrupted_images1.append(corrupted_image1)
         corrupted_images2.append(corrupted_image2)
@@ -202,6 +188,8 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
 image_paths = []
 for sample in random.sample(data, 6):
     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+
+#image_paths = ['mDPO/data/test3.png']
 
 # open the images
 images = []
@@ -254,17 +242,25 @@ plt.close()
 # assert len(image_paths)==len(image_names), 'Different lengths'
 
 # # get the corrupted images
-# corrupted_images = []
-# batch_size = 8
+# corrupted_images1 = []
+# corrupted_images2 = []
+# batch_size = 4
 # for i in range(0, len(image_paths), batch_size):
 #     result_images = draw_seg_mask(yolo_model, image_paths[i:i+batch_size])
 #     print(f'Processed Images {i+1}-{i+batch_size}')
-#     corrupted_images += result_images[1]
+#     corrupted_images1 += result_images[1]
+#     corrupted_images2 += result_images[2]
 
-# assert len(image_paths)==len(corrupted_images), 'Different lengths of corrupted images1'
+# assert len(image_paths)==len(corrupted_images1), 'Different lengths of corrupted images1'
+# assert len(image_paths)==len(corrupted_images2), 'Different lengths of corrupted images2'
 
 # # save the images
 # for i in tqdm(range(len(image_names)), desc='Saving images'):
-#     pil_image = to_pil(corrupted_images[i].squeeze())
-#     save_path = 'mDPO/data/merged_images_corrupted/' + image_names[i]
-#     pil_image.save(save_path)
+#     pil_image1 = to_pil(corrupted_images1[i].squeeze())
+#     pil_image2 = to_pil(corrupted_images2[i].squeeze())
+
+#     save_path1 = 'mDPO/data/merged_images_corrupted1/' + image_names[i]
+#     save_path2 = 'mDPO/data/merged_images_corrupted2/' + image_names[i]
+
+#     pil_image1.save(save_path1)
+#     pil_image2.save(save_path2)
