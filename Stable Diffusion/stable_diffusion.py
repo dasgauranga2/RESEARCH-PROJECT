@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 from openai import OpenAI
+from ultralytics import YOLO
+
+# set device
+device = torch.device("cuda")
 
 # get the OpenAI API key
 with open("mDPO/MMHal-Bench/api.txt", "r") as f:
@@ -13,6 +17,9 @@ with open("mDPO/MMHal-Bench/api.txt", "r") as f:
 
 # openai client
 openai_client = OpenAI(api_key=API_KEY)
+
+# load the instance segmentation model
+yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
 
 # function to summarize a response text
 def summarize(client, response_text):
@@ -31,9 +38,34 @@ def summarize(client, response_text):
 
     return response.choices[0].message.content
 
+# function to detect objects in an image
+def detect_objects(model, image_path):
+    # run image segmentation on image
+    results = model(image_path)
+
+    if results[0].masks is None or results[0].masks.data is None:
+        print("NO OBJECT DETECTED")
+    else:
+        # dictionary of all class labels and their names
+        all_labels = results[0].names
+
+        # list of object class labels detected in the image
+        detected_labels = results[0].boxes.cls.int().tolist()
+
+        # list of detected onject names
+        detected_names = set([all_labels[label] for label in detected_labels])
+
+        print(detected_names)
+
+
 # load the stable diffusion model
-pipe = StableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3-medium-diffusers", torch_dtype=torch.float16)
-pipe = pipe.to("cuda")
+# pipe = StableDiffusion3Pipeline.from_pretrained(
+#     "stabilityai/stable-diffusion-3-medium-diffusers", 
+#     torch_dtype=torch.float16)
+# pipe = StableDiffusion3Pipeline.from_pretrained(
+#     "stabilityai/stable-diffusion-3.5-medium", 
+#     torch_dtype=torch.bfloat16)
+# pipe = pipe.to("cuda")
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
@@ -49,15 +81,18 @@ chosen = []
 rejected = []
 # list of image names
 image_names = []
+# list of image paths
+image_paths = []
 # list of images
 images = []
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
-for sample in random.sample(data, 6):
+for sample in random.sample(data, 8):
     chosen.append(summarize(openai_client, sample['chosen']))
     rejected.append(summarize(openai_client, sample['rejected']))
     images.append(Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB"))
+    image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
     image_names.append(sample['img_path'])
 
 # figure for the original image and the custom images
@@ -66,22 +101,24 @@ axes = axes.flatten()
 
 for i in range(len(chosen)):
 
-    # generate the image
-    custom_image = pipe(
-        chosen[i], # text prompt for generation
-        num_inference_steps=28, # no. of denoising steps for finder details
-        guidance_scale=7.0, # strength of prompt adherence 
-    ).images[0]
+    detect_objects(yolo_model, image_paths[i])
 
-    # plot the original image
-    axes[(i*2)].imshow(images[i])
-    axes[(i*2)].set_title("Original Image")
-    axes[(i*2)].axis('off')
+    # # generate the image
+    # custom_image = pipe(
+    #     chosen[i], # text prompt for generation
+    #     num_inference_steps=28, # no. of denoising steps for finder details
+    #     guidance_scale=7.0, # strength of prompt adherence 
+    # ).images[0]
 
-    # plot the custom image
-    axes[(i*2)+1].imshow(custom_image)
-    axes[(i*2)+1].set_title("Generated Image")
-    axes[(i*2)+1].axis('off')
+    # # plot the original image
+    # axes[(i*2)].imshow(images[i])
+    # axes[(i*2)].set_title("Original Image")
+    # axes[(i*2)].axis('off')
+
+    # # plot the custom image
+    # axes[(i*2)+1].imshow(custom_image)
+    # axes[(i*2)+1].set_title("Generated Image")
+    # axes[(i*2)+1].axis('off')
 
 # save the images
 plt.savefig(f'mDPO/results/sd_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
