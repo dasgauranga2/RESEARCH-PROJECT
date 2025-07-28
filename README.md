@@ -1,8 +1,8 @@
 # Object Aware Preference Optimization
 
-[**🤗 mDPO Dataset**](https://huggingface.co/datasets/fwnlp/mDPO-preference-data)
+[**🤗 mDPO Dataset**](https://huggingface.co/datasets/fwnlp/mDPO-preference-data) | [**🤗 Stable Diffusion**](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers)
 
 ## Description
-We use image segmentation to corrupt the original image only on the segmented regions
+We use both Stable Diffusion and GPT-4o-mini to create chosen and rejected images.
 
-![alt text](mDPO/results/img_seg_corruption.png)
+![alt text](mDPO/results/sd_custom_images.png)
