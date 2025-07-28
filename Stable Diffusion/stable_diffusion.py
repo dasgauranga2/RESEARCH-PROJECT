@@ -46,8 +46,16 @@ def summarize(client, response_text):
 
 # function to create a hallucinate version of response text
 def hallucinate(client, response_text):
+    # prompt = (
+    #     "Rewrite the response text by replacing some objects with different ones, while keeping the sentence structure and overall tone similar.\n\n"
+    #     f"Response Text: {response_text}"
+    # )
+    # prompt = (
+    #     "Rewrite the response text by replacing only one object with a different one, while keeping the sentence structure and overall tone similar.\n\n"
+    #     f"Response Text: {response_text}"
+    # )
     prompt = (
-        "Rewrite the response text by replacing some objects with different ones, while keeping the sentence structure and overall tone similar.\n\n"
+        "Rewrite the response text by replacing the most important object (the main subject of the scene ) with a different one, while keeping the sentence structure and overall tone similar.\n\n"
         f"Response Text: {response_text}"
     )
 
@@ -61,38 +69,38 @@ def hallucinate(client, response_text):
 
     return response.choices[0].message.content
 
-# function to remove objects from an image
-def remove_objects(seg_model, sd_pipe, image_path, image):
-    # run image segmentation on image
-    results = seg_model(image_path)
+# # function to remove objects from an image
+# def remove_objects(seg_model, sd_pipe, image_path, image):
+#     # run image segmentation on image
+#     results = seg_model(image_path)
 
-    if results[0].masks is None or results[0].masks.data is None:
-        print("NO OBJECT DETECTED")
-        return None
-    else:
-        # get all the segmentation masks
-        masks = results[0].masks.data.cpu().numpy() # shape: (N, H, W)
+#     if results[0].masks is None or results[0].masks.data is None:
+#         print("NO OBJECT DETECTED")
+#         return None
+#     else:
+#         # get all the segmentation masks
+#         masks = results[0].masks.data.cpu().numpy() # shape: (N, H, W)
 
-        if masks.shape[0] > 1:
-            # indices of masks that will be selected
-            # randomly select any two masks
-            selected_indices = random.sample(range(len(masks)), min(2, len(masks)))
+#         if masks.shape[0] > 1:
+#             # indices of masks that will be selected
+#             # randomly select any two masks
+#             selected_indices = random.sample(range(len(masks)), min(2, len(masks)))
 
-            # combine the selected masks using logical OR
-            selected_mask = np.logical_or(masks[selected_indices[0]], masks[selected_indices[1]])
-        else:
-            selected_mask = masks[0]
+#             # combine the selected masks using logical OR
+#             selected_mask = np.logical_or(masks[selected_indices[0]], masks[selected_indices[1]])
+#         else:
+#             selected_mask = masks[0]
 
-        # convert the mask to an image
-        mask_image = Image.fromarray((selected_mask.astype("uint8") * 255), mode="L")
+#         # convert the mask to an image
+#         mask_image = Image.fromarray((selected_mask.astype("uint8") * 255), mode="L")
 
-        # remove the segmented object
-        removed_image = sd_pipe(prompt='Erase the object covered by the mask and make the surrounding area blend naturally', 
-                             image=image, 
-                             mask_image=mask_image).images[0]
+#         # remove the segmented object
+#         removed_image = sd_pipe(prompt='Erase the object covered by the mask and make the surrounding area blend naturally', 
+#                              image=image, 
+#                              mask_image=mask_image).images[0]
 
-        # open the original image
-        return mask_image, removed_image
+#         # open the original image
+#         return mask_image, removed_image
 
 # load the stable diffusion model
 pipe = StableDiffusion3Pipeline.from_pretrained(
@@ -105,15 +113,16 @@ pipe = pipe.to("cuda")
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
-# # index of data point
-# i = 480
-# chosen_response = data[i]['chosen']
-# summarized_chosen_response = summarize(openai_client, chosen_response)
-# hallucinated_response = hallucinate(openai_client, summarized_chosen_response)
-# print(f"QUESTION: {data[i]['prompt']}\n")
-# print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
-# print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}")
-# print(f"HALLUCINATED RESPONSE: {hallucinated_response}")
+# # indexes of data point
+# idxs = [10,20,50,100,500,550]
+# for i in idxs:
+#     chosen_response = data[i]['chosen']
+#     summarized_chosen_response = summarize(openai_client, chosen_response)
+#     hallucinated_response = hallucinate(openai_client, summarized_chosen_response)
+#     print(f"QUESTION: {data[i]['prompt']}\n")
+#     print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
+#     print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}")
+#     print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
 
 # list of chosen responses
 chosen = []
