@@ -1,12 +1,11 @@
 import torch
 from diffusers import StableDiffusion3Pipeline
-from diffusers.utils import load_image, make_image_grid
 import json
 import random
 import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from ultralytics import YOLO
 from torchvision import transforms
 import numpy as np
@@ -23,6 +22,12 @@ with open("mDPO/MMHal-Bench/api.txt", "r") as f:
 # openai client
 openai_client = OpenAI(api_key=API_KEY)
 
+# open the text file for logging errors
+with open("Stable Diffusion/log.txt", "w") as f:
+    f.write("LOG STARTED\n")
+# open the text file in append mode
+log_file = open("Stable Diffusion/log.txt", "a")
+
 # # load the instance segmentation model
 # yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
 
@@ -35,17 +40,27 @@ def summarize(client, response_text):
         "Using the response text, give a short summary of the image that is described by the text.\n\n"
         f"Response Text: {response_text}"
     )
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini-2024-07-18",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.0,
-    )
-
-    return response.choices[0].message.content
-
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
+            
 # function to create a hallucinated version of response text
 def hallucinate(client, response_text):
     # prompt = (
@@ -61,15 +76,26 @@ def hallucinate(client, response_text):
         f"Response Text: {response_text}"
     )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini-2024-07-18",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.0,
-    )
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
 
-    return response.choices[0].message.content
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
 
 # # function to remove objects from an image
 # def remove_objects(seg_model, sd_pipe, image_path, image):
@@ -215,7 +241,8 @@ for sample in tqdm(data, desc='Generating Responses'):
     responses_data.append({
         'chosen': sample['chosen'],
         'chosen_summarized': chosen_response_summarized,
-        'hallucinated': hallucinated_response
+        'hallucinated': hallucinated_response,
+        'img_name': sample['img_path']
     })
 
     chosen.append(chosen_response_summarized)
@@ -259,3 +286,5 @@ for i in range(len(chosen)):
 
     if i % 50 == 0:
         print(f"COMPLETED {i+1}/{len(chosen)}")
+
+log_file.close()
