@@ -5,7 +5,7 @@ import random
 import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
-from openai import OpenAI, RateLimitError
+from openai import OpenAI, RateLimitError, InternalServerError
 from ultralytics import YOLO
 from torchvision import transforms
 import numpy as np
@@ -56,6 +56,12 @@ def summarize(client, response_text):
             log_file.write(f"{str(error)}\n")
             log_file.flush()
             time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
         except Exception as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
@@ -92,6 +98,12 @@ def hallucinate(client, response_text):
             log_file.write(f"{str(error)}\n")
             log_file.flush()
             time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
         except Exception as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
@@ -142,14 +154,14 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # # indexes of data point
-# idxs = [10,20,50,100,500,550]
+# idxs = [0,10,20,40,50,80,100,500,400,550,1000,1200,1500]
 # for i in idxs:
 #     chosen_response = data[i]['chosen']
 #     summarized_chosen_response = summarize(openai_client, chosen_response)
 #     hallucinated_response = hallucinate(openai_client, summarized_chosen_response)
 #     print(f"QUESTION: {data[i]['prompt']}\n")
 #     print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
-#     print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}")
+#     print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
 #     print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
 
 # list of summarized chosen responses
