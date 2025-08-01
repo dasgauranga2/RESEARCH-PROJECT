@@ -13,8 +13,8 @@ from transformers import GPTQConfig, deepspeed
 from transformers.trainer_pt_utils import LabelSmoother
 
 from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
-from data_collator_bunny_phi import mDPODataCollatorBunny, mDPOCNIDataCollatorBunny, mDPODCIDataCollatorBunny
-from dpo_trainer import mDPOTrainer, mDPOCNITrainer, mDPODCITrainer
+from data_collator_bunny_phi import mDPODataCollatorBunny, mDPOCNIDataCollatorBunny, mDPODCIDataCollatorBunny, mDPOSDDataCollatorBunny
+from dpo_trainer import mDPOTrainer, mDPOCNITrainer, mDPODCITrainer, mDPOSDTrainer
 
 # run the script using the following command
 # CUDA_VISIBLE_DEVICES=0 python bunny/run_dpo_bunny.py
@@ -291,13 +291,13 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = mDPODCITrainer(
+    trainer = mDPOSDTrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=mDPODCIDataCollatorBunny(
+        data_collator=mDPOSDDataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,
