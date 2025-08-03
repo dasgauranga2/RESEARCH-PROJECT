@@ -36,8 +36,14 @@ log_file = open("Stable Diffusion/log.txt", "a")
 
 # function to summarize a response text
 def summarize(client, response_text):
+    # prompt = (
+    #     "Using the response text, give a short summary of the image that is described by the text.\n\n"
+    #     f"Response Text: {response_text}"
+    # )
     prompt = (
-        "Using the response text, give a short summary of the image that is described by the text.\n\n"
+        "Summarize only the visual content described in the response text. "
+        "Do not include any assumptions, causes, intentions, or speculative interpretations. "
+        "Only describe what is visually observable in the scene.\n\n"
         f"Response Text: {response_text}"
     )
     response = None
@@ -143,9 +149,12 @@ def hallucinate(client, response_text):
 #         return mask_image, removed_image
 
 # load the stable diffusion model
+# pipe = StableDiffusion3Pipeline.from_pretrained(
+#     "stabilityai/stable-diffusion-3-medium-diffusers", 
+#     torch_dtype=torch.float16)
 pipe = StableDiffusion3Pipeline.from_pretrained(
-    "stabilityai/stable-diffusion-3-medium-diffusers", 
-    torch_dtype=torch.float16)
+    "stabilityai/stable-diffusion-3.5-medium", 
+    torch_dtype=torch.bfloat16)
 #pipe.enable_model_cpu_offload()
 pipe = pipe.to("cuda")
 
@@ -179,83 +188,13 @@ images = []
 # list to save the responses
 responses_data = []
 
-# # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
-# # iterate through the data
-# for sample in random.sample(data, 6):
-#     # summarize the chosen response
-#     chosen_response_summarized = summarize(openai_client, sample['chosen'])
-#     # generate the hallucinated response
-#     hallucinated_response = hallucinate(openai_client, chosen_response_summarized)
-
-#     chosen.append(chosen_response_summarized)
-#     hallucinated.append(hallucinated_response)
-#     #rejected.append(summarize(openai_client, sample['rejected']))
-#     images.append(Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB"))
-#     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
-#     image_names.append(sample['img_path'])
-
-# # figure for the original image and the custom images
-# fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 20))
-# axes = axes.flatten()
-
-# start = time.time()
-# for i in range(len(chosen)):
-#     # # use the segmentation and generation model to remove objects
-#     # generated_image = remove_objects(yolo_model, pipe, image_paths[i], images[i])
-#     # generate the chosen image
-#     chosen_image = pipe(
-#         chosen[i], # text prompt for generation
-#         height=640,
-#         width=640,
-#         num_inference_steps=28, # no. of denoising steps for finder details
-#         guidance_scale=7.0, # strength of prompt adherence 
-#     ).images[0]
-
-#     # generate the rejected image
-#     rejected_image = pipe(
-#         hallucinated[i], # text prompt for generation
-#         height=640,
-#         width=640,
-#         num_inference_steps=28, # no. of denoising steps for finder details
-#         guidance_scale=7.0, # strength of prompt adherence 
-#     ).images[0]
-
-#     # plot the original image
-#     axes[(i*3)].imshow(images[i])
-#     axes[(i*3)].set_title("Original Image")
-#     axes[(i*3)].axis('off')
-
-#     # plot the chosen image
-#     axes[(i*3)+1].imshow(chosen_image)
-#     axes[(i*3)+1].set_title("Chosen Image")
-#     axes[(i*3)+1].axis('off')
-
-#     # plot the rejected image
-#     axes[(i*3)+2].imshow(rejected_image)
-#     axes[(i*3)+2].set_title("Rejected Image")
-#     axes[(i*3)+2].axis('off')
-
-# end = time.time()
-# print(f"TIME TAKEN: {(end-start):.2f} seconds")
-
-# # save the images
-# plt.savefig(f'mDPO/results/sd_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
-# plt.close()
-
-# USE THE ENTIRE DATASET
+# RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
-for sample in tqdm(data, desc='Generating Responses'):
+for sample in random.sample(data, 6):
     # summarize the chosen response
     chosen_response_summarized = summarize(openai_client, sample['chosen'])
     # generate the hallucinated response
     hallucinated_response = hallucinate(openai_client, chosen_response_summarized)
-
-    responses_data.append({
-        'chosen': sample['chosen'],
-        'chosen_summarized': chosen_response_summarized,
-        'hallucinated': hallucinated_response,
-        'img_name': sample['img_path']
-    })
 
     chosen.append(chosen_response_summarized)
     hallucinated.append(hallucinated_response)
@@ -264,39 +203,110 @@ for sample in tqdm(data, desc='Generating Responses'):
     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
     image_names.append(sample['img_path'])
 
-# save the generated responses
-with open('mDPO/data/gen_responses.json', 'w') as f:
-    json.dump(responses_data, f, indent=4)
+# figure for the original image and the custom images
+fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 20))
+axes = axes.flatten()
 
+start = time.time()
 for i in range(len(chosen)):
     # # use the segmentation and generation model to remove objects
     # generated_image = remove_objects(yolo_model, pipe, image_paths[i], images[i])
     # generate the chosen image
     chosen_image = pipe(
         chosen[i], # text prompt for generation
-        height=512,
-        width=512,
-        num_inference_steps=28, # no. of denoising steps for finder details
-        guidance_scale=7.0, # strength of prompt adherence 
+        height=640,
+        width=640,
+        num_inference_steps=35, # no. of denoising steps for finer details
+        guidance_scale=10.0, # strength of prompt adherence 
     ).images[0]
-    # chosen image save path
-    chosen_save_path = 'mDPO/data/chosen/' + image_names[i]
 
     # generate the rejected image
     rejected_image = pipe(
         hallucinated[i], # text prompt for generation
-        height=512,
-        width=512,
-        num_inference_steps=28, # no. of denoising steps for finder details
-        guidance_scale=7.0, # strength of prompt adherence 
+        height=640,
+        width=640,
+        num_inference_steps=35, # no. of denoising steps for finer details
+        guidance_scale=10.0, # strength of prompt adherence 
     ).images[0]
-    # rejected image save path
-    rejected_save_path = 'mDPO/data/rejected/' + image_names[i]
 
-    chosen_image.save(chosen_save_path)
-    rejected_image.save(rejected_save_path)
+    # plot the original image
+    axes[(i*3)].imshow(images[i])
+    axes[(i*3)].set_title("Original Image")
+    axes[(i*3)].axis('off')
 
-    if i % 50 == 0:
-        print(f"COMPLETED {i+1}/{len(chosen)}")
+    # plot the chosen image
+    axes[(i*3)+1].imshow(chosen_image)
+    axes[(i*3)+1].set_title("Chosen Image")
+    axes[(i*3)+1].axis('off')
+
+    # plot the rejected image
+    axes[(i*3)+2].imshow(rejected_image)
+    axes[(i*3)+2].set_title("Rejected Image")
+    axes[(i*3)+2].axis('off')
+
+end = time.time()
+print(f"TIME TAKEN: {(end-start):.2f} seconds")
+
+# save the images
+plt.savefig(f'mDPO/results/sd_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
+
+
+# # USE THE ENTIRE DATASET
+# # iterate through the data
+# for sample in tqdm(data, desc='Generating Responses'):
+#     # summarize the chosen response
+#     chosen_response_summarized = summarize(openai_client, sample['chosen'])
+#     # generate the hallucinated response
+#     hallucinated_response = hallucinate(openai_client, chosen_response_summarized)
+
+#     responses_data.append({
+#         'chosen': sample['chosen'],
+#         'chosen_summarized': chosen_response_summarized,
+#         'hallucinated': hallucinated_response,
+#         'img_name': sample['img_path']
+#     })
+
+#     chosen.append(chosen_response_summarized)
+#     hallucinated.append(hallucinated_response)
+#     #rejected.append(summarize(openai_client, sample['rejected']))
+#     images.append(Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB"))
+#     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
+#     image_names.append(sample['img_path'])
+
+# # save the generated responses
+# with open('mDPO/data/gen_responses.json', 'w') as f:
+#     json.dump(responses_data, f, indent=4)
+
+# for i in range(len(chosen)):
+#     # # use the segmentation and generation model to remove objects
+#     # generated_image = remove_objects(yolo_model, pipe, image_paths[i], images[i])
+#     # generate the chosen image
+#     chosen_image = pipe(
+#         chosen[i], # text prompt for generation
+#         height=512,
+#         width=512,
+#         num_inference_steps=28, # no. of denoising steps for finder details
+#         guidance_scale=7.0, # strength of prompt adherence 
+#     ).images[0]
+#     # chosen image save path
+#     chosen_save_path = 'mDPO/data/chosen/' + image_names[i]
+
+#     # generate the rejected image
+#     rejected_image = pipe(
+#         hallucinated[i], # text prompt for generation
+#         height=512,
+#         width=512,
+#         num_inference_steps=28, # no. of denoising steps for finder details
+#         guidance_scale=7.0, # strength of prompt adherence 
+#     ).images[0]
+#     # rejected image save path
+#     rejected_save_path = 'mDPO/data/rejected/' + image_names[i]
+
+#     chosen_image.save(chosen_save_path)
+#     rejected_image.save(rejected_save_path)
+
+#     if i % 50 == 0:
+#         print(f"COMPLETED {i+1}/{len(chosen)}")
 
 log_file.close()
