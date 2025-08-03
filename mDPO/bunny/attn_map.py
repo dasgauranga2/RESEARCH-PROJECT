@@ -33,8 +33,8 @@ torch.set_default_device(device)
 # variable to decide which checkpoints to use
 model_names = [
     'mdpo_bunny',
-    'mdpo_bunny_cni',
-    'mdpo_bunny_dci',
+    'mdpo_bunny_dci_is',
+    'mdpo_bunny_sd'
 ]
 #model_name = 'mdpo_bunny'
 #model_name = 'mdpo_bunny_dci'
@@ -162,10 +162,10 @@ def prepare_inputs(prompt, tokenizer):
 # # image path
 # image_path = './data/test/count1.jpg'
 
-# user query
-query = "How many bicycles are there in the image?"
-# image path
-image_path = './data/test/count2.jpg'
+# # user query
+# query = "How many bicycles are there in the image?"
+# # image path
+# image_path = './data/test/count2.jpg'
 
 # # user query
 # query = "How many zebras are there in the image?"
@@ -192,10 +192,10 @@ image_path = './data/test/count2.jpg'
 # # image path
 # image_path = './data/test/count8.jpg'
 
-# # user query
-# query = "How many traffic signs in the image?"
-# # image path
-# image_path = './data/test/count9.jpg'
+# user query
+query = "How many traffic signs in the image?"
+# image path
+image_path = './data/test/count9.jpg'
 
 # function to generate the model's response
 def generate_response(question, img_tensor, tokenizer, model):
@@ -311,8 +311,12 @@ def spatial_attention_map(question, img_tensor, tokenizer, model):
         return_dict=True
     )
 
+    # # USE LOCALIZATION HEADS
     # # index position where the first image token is located
     # image_token_pos = data["prompt_input_ids"].index(-200)
+
+    # # localization heads
+    # localization_heads = [(20,22), (22,13), (31,22), (14,20), (18,8), (25,18), (31,0), (21,14), (22, 11), (27, 1)]
 
     # for lh in localization_heads:
     #     # when predicting the first answer token
@@ -320,7 +324,7 @@ def spatial_attention_map(question, img_tensor, tokenizer, model):
     #     # for a particular layer
     #     ans_img_attn_scores = outputs.attentions[lh[0]].squeeze()[:, -1, image_token_pos:image_token_pos+729] # (heads, 729)
 
-    #     # exrtract the attention scores for a particular head
+    #     # extract the attention scores for a particular head
     #     ans_img_attn_score = ans_img_attn_scores[lh[1]]
 
     #     # reshape to 27 x 27 (no. of patches) to get the spatial attention map
@@ -330,6 +334,7 @@ def spatial_attention_map(question, img_tensor, tokenizer, model):
     
     # return all_sam
 
+    # USE ATTENTION SUMS ONLY
     # number of layers
     num_layers = len(outputs.attentions)
 
@@ -354,6 +359,7 @@ def spatial_attention_map(question, img_tensor, tokenizer, model):
 
             all_sam.append((spatial_attn_map, ans_img_attn_sum, layer, i))
     
+    # sort attention maps using the attention sum scores
     all_sam.sort(key=lambda x:x[1], reverse=True)
 
     # # keep only those attention maps which have high attention map scores
@@ -364,7 +370,7 @@ def spatial_attention_map(question, img_tensor, tokenizer, model):
     # # take the top-10
     # all_sam = all_sam[:10]
 
-    return all_sam[:20]
+    return all_sam[:10]
 
 # reopen the original image
 orig_image = Image.open(image_path)
@@ -380,11 +386,12 @@ orig_image_cropped = orig_image_resized.crop(crop_box)
 # # mDPO localization heads
 # mdpo_lh = [(20,22), (22,13), (31,22), (14,20), (18,8), (25,18), (31,0), (21,14), (27,1), (22,11)]
 
+# iterate through the models
 for i, model_name in enumerate(model_names):
     # load the model from the checkpoint name
     model = load_model(model_name)
 
-    # generate spatial attention map
+    # generate spatial attention maps
     spt_attn_maps = spatial_attention_map(query, image_tensor, tokenizer, model)
 
     # generate the model's response
@@ -406,7 +413,7 @@ for i, model_name in enumerate(model_names):
     for j in range(len(spt_attn_maps)):
         axes[j+1].imshow(spt_attn_maps[j][0], cmap='viridis')
         #axes[i+1].set_title(f"Layer: {spt_attn_maps[j][1]}\nHead: {spt_attn_maps[j][2]}")
-        axes[j+1].set_title(f"Layer: {spt_attn_maps[j][2]}\nHead: {spt_attn_maps[j][3]}")
+        axes[j+1].set_title(f"Layer: {spt_attn_maps[j][2]}\nHead: {spt_attn_maps[j][3]}\nAttention Sum: {spt_attn_maps[j][1]:.2f}")
         axes[j+1].axis('off')
 
     # turn off remaining plots
