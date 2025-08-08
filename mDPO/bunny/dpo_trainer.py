@@ -786,22 +786,22 @@ class mDPOSDTrainer(DPOTrainer):
         # repeat the above this time for the contrastive part
         # this is done by using the stable diffusion generated images
         chosen_sd_model_kwargs = {
-                "labels": batch["chosen_labels"],
+                "labels": batch["chosen_summarized_labels"],
                 "images": batch["chosen_image"]
             }
         rejected_sd_model_kwargs = {
-                "labels": batch["chosen_labels"],
+                "labels": batch["hallucinated_labels"],
                 "images": batch["rejected_image"]
             }
             
         chosen_sd_outputs, chosen_sd_label = model(
-            batch["chosen_input_ids"],
-            attention_mask=batch["chosen_attention_mask"],
+            batch["chosen_summarized_input_ids"],
+            attention_mask=batch["chosen_summarized_attention_mask"],
             **chosen_sd_model_kwargs,
         )
         rejected_sd_outputs, rejected_sd_label = model(
-            batch["chosen_input_ids"],
-            attention_mask=batch["chosen_attention_mask"],
+            batch["hallucinated_input_ids"],
+            attention_mask=batch["hallucinated_attention_mask"],
             **rejected_sd_model_kwargs,
         )
         chosen_sd_logits = chosen_sd_outputs.logits.to(torch.float32)
@@ -845,8 +845,8 @@ class mDPOSDTrainer(DPOTrainer):
         logits = pi_logratios - ref_logratios  # response preference
 
         # repeat the same for stable diffusion generated images
-        image_conditional_pi_logratios = policy_chosen_sd_logps - policy_rejected_sd_logps
-        image_conditional_ref_logratios = reference_chosen_sd_logps - reference_rejected_sd_logps
+        image_conditional_pi_logratios = policy_chosen_sd_logps + policy_rejected_sd_logps
+        image_conditional_ref_logratios = reference_chosen_sd_logps + reference_rejected_sd_logps
 
         if reference_free:
             image_conditional_ref_logratios = 0

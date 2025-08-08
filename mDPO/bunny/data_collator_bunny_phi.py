@@ -448,6 +448,8 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
         prompt: str, # prompt text
         chosen: str, # chosen response text
         rejected: str, # rejected response text
+        chosen_summarized: str, # chosen summarized response text
+        hallucinated: str, # hallucinated response text
         img_path: str, # image path
     ) -> Dict:
         # dictionary to store the inputs
@@ -456,6 +458,8 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
         # tokenize the response texts
         chosen_tokens = self.tokenizer(chosen, add_special_tokens=False)
         rejected_tokens = self.tokenizer(rejected, add_special_tokens=False)
+        chosen_summarized_tokens = self.tokenizer(chosen_summarized, add_special_tokens=False)
+        hallucinated_tokens = self.tokenizer(hallucinated, add_special_tokens=False)
 
         prompt_tokens = {}
         # prompt token ids
@@ -488,12 +492,30 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
         ]
         rejected_tokens["attention_mask"] = new_attention_mask_r
 
+        eos_indices_chosen_summarized = [i for i, x in enumerate(chosen_summarized_tokens["input_ids"]) if x == eos_token_id]
+        new_attention_mask_cs = [
+            0 if i in eos_indices_chosen_summarized else p for i, p in enumerate(chosen_summarized_tokens["attention_mask"])
+        ]
+        chosen_summarized_tokens["attention_mask"] = new_attention_mask_cs
+
+        eos_indices_hallucinated = [i for i, x in enumerate(hallucinated_tokens["input_ids"]) if x == eos_token_id]
+        new_attention_mask_h = [
+            0 if i in eos_indices_hallucinated else p for i, p in enumerate(hallucinated_tokens["attention_mask"])
+        ]
+        hallucinated_tokens["attention_mask"] = new_attention_mask_h
+
         # add EOS token to end of responses
         chosen_tokens["input_ids"].append(self.tokenizer.eos_token_id)
         chosen_tokens["attention_mask"].append(1)
 
         rejected_tokens["input_ids"].append(self.tokenizer.eos_token_id)
         rejected_tokens["attention_mask"].append(1)
+
+        chosen_summarized_tokens["input_ids"].append(self.tokenizer.eos_token_id)
+        chosen_summarized_tokens["attention_mask"].append(1)
+
+        hallucinated_tokens["input_ids"].append(self.tokenizer.eos_token_id)
+        hallucinated_tokens["attention_mask"].append(1)
 
         # determine the longer of the chosen and rejected response
         longer_response_length = max(len(chosen_tokens["input_ids"]), len(rejected_tokens["input_ids"]))
@@ -517,6 +539,9 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
         # concatenate the prompt and response tokens
         chosen_sequence_tokens = {k: prompt_tokens[k] + chosen_tokens[k] for k in chosen_tokens}
         rejected_sequence_tokens = {k: prompt_tokens[k] + rejected_tokens[k] for k in rejected_tokens}
+        chosen_summarized_sequence_tokens = {k: prompt_tokens[k] + chosen_summarized_tokens[k] for k in chosen_summarized_tokens}
+        hallucinated_sequence_tokens = {k: prompt_tokens[k] + hallucinated_tokens[k] for k in hallucinated_tokens}
+
         # lables are created from the above tokens such that
         # tokens corresponding to prompt tokens are masked 
         chosen_sequence_tokens["labels"] = chosen_sequence_tokens["input_ids"][:]
@@ -527,10 +552,20 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
         rejected_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
             prompt_tokens["input_ids"]
         )
+        chosen_summarized_sequence_tokens["labels"] = chosen_summarized_sequence_tokens["input_ids"][:]
+        chosen_summarized_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
+            prompt_tokens["input_ids"]
+        )
+        hallucinated_sequence_tokens["labels"] = hallucinated_sequence_tokens["input_ids"][:]
+        hallucinated_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
+            prompt_tokens["input_ids"]
+        )
 
         for k, toks in {
             "chosen": chosen_sequence_tokens,
             "rejected": rejected_sequence_tokens,
+            "chosen_summarized": chosen_summarized_sequence_tokens,
+            "hallucinated": hallucinated_sequence_tokens,
             "prompt": prompt_tokens,
         }.items():
             for type_key, tokens in toks.items():
@@ -578,9 +613,14 @@ class mDPOSDDataCollatorBunny(DPODataCollatorWithPadding):
                 prompt = feature["prompt"]
                 chosen = feature["chosen"]
                 rejected = feature["rejected"]
+                chosen_summarized = feature["chosen_summarized"]
+                hallucinated = feature["hallucinated"]
                 img_path = feature["img_path"]
 
-                batch_element = self.tokenize_batch_element(prompt, chosen, rejected, img_path)
+                batch_element = self.tokenize_batch_element(prompt, 
+                                                            chosen, rejected, 
+                                                            chosen_summarized, hallucinated, 
+                                                            img_path)
                 tokenized_batch.append(batch_element)
 
             # collate the list of data points

@@ -28,6 +28,6 @@ remove_unused_columns: false
 lora_r: 64  
 lora_alpha: 128 
 lora_target_modules: all-linear 
-dataset_path: ./data/vlfeedback_llava_10k.json # preference dataset path
-run_name: mdpo_bunny_sd
-output_dir: ./checkpoint/mdpo_bunny_sd # directory where checkpoints and outputs will be saved
+dataset_path: ./data/vlfeedback_llava_10k_gen.json # preference dataset path
+run_name: mdpo_bunny_sd2
+output_dir: ./checkpoint/mdpo_bunny_sd2 # directory where checkpoints and outputs will be saved
