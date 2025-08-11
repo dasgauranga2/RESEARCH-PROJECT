@@ -163,14 +163,14 @@ cols = 4
 rows = 1
 
 # figure for the original image
-fig, axes = plt.subplots(rows, cols, figsize=(cols*2.8, 4))
+fig, axes = plt.subplots(rows, cols, figsize=(cols*2.8, 3.6))
 axes = axes.flatten()
 
 # add a grid of 2 rows per column: image on top, text underneath
 gs = fig.add_gridspec(
     nrows=2, ncols=cols,
-    height_ratios=[1.0, 0.2],  # tune the bottom ratio if you need more/less text space
-    hspace=0.02, wspace=0.2
+    height_ratios=[0.35, 0.1],  # tune the bottom ratio if you need more/less text space
+    hspace=0.0, wspace=0.2
 )
 
 for i, (query, image_path) in enumerate(zip(queries, image_paths)):
@@ -203,7 +203,6 @@ for i, (query, image_path) in enumerate(zip(queries, image_paths)):
 
     pos_img = ax_img.get_position()
     pos_txt = ax_txt.get_position()
-    #ax_txt.set_position([pos_img.x0, pos_txt.y0, pos_img.width, pos_txt.height])
 
     # Wrap text so it stays inside the column width
     # (adjust width to taste; smaller numbers wrap sooner)
