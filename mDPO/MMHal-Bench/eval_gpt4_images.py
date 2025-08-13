@@ -3,6 +3,8 @@ import argparse
 import json
 import time
 import re
+import base64
+import mimetypes
 
 # RUN THIS SCRIPT USING THE FOLLOWING COMMAND -
 '''
@@ -62,6 +64,25 @@ To evaluate the LMM responses, first, begin your evaluation by providing a short
 {}
 '''
 
+# function to get the image path from url
+def load_image_path(image_src):
+    # extract the image name
+    image_name = image_src.split('/')[-1]
+
+    # path of image
+    image_path = './MMHal-Bench/images/' + image_name
+    
+    return image_path
+
+# open image file and convert it base64 url data
+def image_to_data_url(path: str) -> str:
+    mime, _ = mimetypes.guess_type(path)
+    if mime is None:
+        mime = "image/png"  # safe default
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--response', type=str, default='responses/idefics_80b.json', help='response file containing images, questions, and model responses')
@@ -84,7 +105,8 @@ if __name__ == '__main__':
     responses = []
     for i, record in enumerate(records):
         #image_content = ', '.join(record['image_content'])
-        image_url = record['image_src']
+        image_path = load_image_path(record['image_src'])
+        image_url = image_to_data_url(image_path)
         input_text = template.format(record['question'], record['model_answer'])
         # print(input_text)
 
