@@ -17,6 +17,7 @@ import pickle
 import random
 import requests
 from io import BytesIO
+import math
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -499,6 +500,81 @@ def attention_maps(input_text, img_tensor, tokenizer, model):
 
     return attn_maps
 
+# get kernel to perform Gaussian smoothing
+def _gaussian3x3():
+    k = np.array([[1., 2., 1.],
+                  [2., 4., 2.],
+                  [1., 2., 1.]], dtype=np.float32)
+    k /= k.sum()
+    return k
+
+# perform 2d convolution
+def _conv2d_same(img, kernel):
+    assert img.ndim == 2 and kernel.shape == (3,3)
+    H, W = img.shape
+    pad = 1
+    padded = np.pad(img, ((pad, pad), (pad, pad)), mode='edge')
+    out = np.empty_like(img, dtype=np.float32)
+    for y in range(H):
+        ys = y
+        for x in range(W):
+            xs = x
+            window = padded[ys:ys+3, xs:xs+3]
+            out[y, x] = np.sum(window * kernel, dtype=np.float32)
+    return out
+
+# function to combine the attention maps of the localization heads
+def combine_attention_maps(attn_maps,
+                           smooth: bool = True,
+                           normalize: bool = True,
+                           return_mask: bool = False,
+                           return_bbox: bool = False,
+                           threshold: str = "mean"):
+
+    # Stack -> (N, P, P)
+    stacked = np.stack(attn_maps, axis=0).astype(np.float32)
+
+    # 1) smooth per map (paper)
+    if smooth:
+        k = _gaussian3x3()
+        for i in range(stacked.shape[0]):
+            stacked[i] = _conv2d_same(stacked[i], k)
+
+    # 2) element-wise SUM (paper)
+    combined = np.sum(stacked, axis=0)
+
+    # 3) (optional) normalize to [0,1] for visualization
+    if normalize:
+        mn, mx = float(combined.min()), float(combined.max())
+        if mx > mn:
+            combined = (combined - mn) / (mx - mn)
+
+    # Optionally produce mask and bbox (paper: mean threshold + largest rectangle)
+    if not (return_mask or return_bbox):
+        return combined
+
+    if threshold.lower() != "mean":
+        raise ValueError("Only 'mean' threshold is supported to match the paper.")
+
+    thr = float(combined.mean())
+    mask = (combined > thr).astype(np.uint8)  # (P,P) in {0,1}
+
+    bbox = None
+    if return_bbox:
+        ys, xs = np.where(mask > 0)
+        if ys.size > 0:
+            y1, y2 = int(ys.min()), int(ys.max())
+            x1, x2 = int(xs.min()), int(xs.max())
+            bbox = (x1, y1, x2, y2)
+
+    if return_mask and return_bbox:
+        return combined, mask, bbox
+    elif return_mask:
+        return combined, mask
+    elif return_bbox:
+        return combined, bbox
+    else:
+        return combined
 
 # get the image from the file name
 orig_image = Image.open('./data/test3.png')
@@ -519,8 +595,12 @@ orig_image_cropped = orig_image_resized.crop(crop_box)
 # get the attention maps of the localization heads
 result = attention_maps(input_text, image_tensor, tokenizer, model)
 
+# get the combined attention map
+comb_attn_map = combine_attention_maps([attn_map[1] for attn_map in result])
+
+total = len(result)+2
 cols = 5
-rows = (len(result)+cols) // cols
+rows = math.ceil(total/cols)
 
 # figure for the original image and the attention maps
 fig, axes = plt.subplots(rows, cols, figsize=(cols*3, rows*3))
@@ -531,15 +611,20 @@ axes[0].imshow(orig_image_cropped)
 axes[0].set_title("Original Image")
 axes[0].axis('off')
 
+# plot the combined attention map image
+axes[1].imshow(comb_attn_map)
+axes[1].set_title("Combined Attention Map")
+axes[1].axis('off')
+
 # plot the attention maps
 for j in range(len(result)):
-    axes[j+1].imshow(result[j][1], cmap='viridis')
-    #axes[i+1].set_title(f"Layer: {spt_attn_maps[j][1]}\nHead: {spt_attn_maps[j][2]}")
-    axes[j+1].set_title(f"Layer: {result[j][0][0]}\nHead: {result[j][0][1]}")
-    axes[j+1].axis('off')
+    axes[j+2].imshow(result[j][1], cmap='viridis')
+    #axes[i+2].set_title(f"Layer: {spt_attn_maps[j][1]}\nHead: {spt_attn_maps[j][2]}")
+    axes[j+2].set_title(f"Layer: {result[j][0][0]}\nHead: {result[j][0][1]}")
+    axes[j+2].axis('off')
 
 # turn off remaining plots
-for j in range(len(result)+1, len(axes)):
+for j in range(len(result)+2, len(axes)):
     axes[j].axis('off')
 
 plt.suptitle(f"Input Text: {ref_sent}\nModel Name: {model_name}", fontsize=10)
