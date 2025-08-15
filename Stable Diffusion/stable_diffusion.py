@@ -22,11 +22,11 @@ with open("mDPO/MMHal-Bench/api.txt", "r") as f:
 # openai client
 openai_client = OpenAI(api_key=API_KEY)
 
-# open the text file for logging errors
-with open("Stable Diffusion/log.txt", "w") as f:
-    f.write("LOG STARTED\n")
-# open the text file in append mode
-log_file = open("Stable Diffusion/log.txt", "a")
+# # open the text file for logging errors
+# with open("Stable Diffusion/log.txt", "w") as f:
+#     f.write("LOG STARTED\n")
+# # open the text file in append mode
+# log_file = open("Stable Diffusion/log.txt", "a")
 
 # # load the instance segmentation model
 # yolo_model = YOLO("YOLO/yolo11x-seg.pt").to(device)
@@ -59,18 +59,18 @@ def summarize(client, response_text):
 
             return response.choices[0].message.content
         except RateLimitError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             time.sleep(60)
             continue
         except InternalServerError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             time.sleep(600)
             continue
         except Exception as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             raise
             
 # function to create a hallucinated version of response text
@@ -83,8 +83,12 @@ def hallucinate(client, response_text):
     #     "Rewrite the response text by replacing only one object with a different one, while keeping the sentence structure and overall tone similar.\n\n"
     #     f"Response Text: {response_text}"
     # )
+    # prompt = (
+    #     "Rewrite the response text by replacing the most important object (the main subject of the scene ) with an object a multimodal LLM is most likely to hallucinate, while keeping the sentence structure and overall tone similar.\n\n"
+    #     f"Response Text: {response_text}"
+    # )
     prompt = (
-        "Rewrite the response text by replacing the most important object (the main subject of the scene ) with a different one, while keeping the sentence structure and overall tone similar.\n\n"
+        "Rewrite the response text by replacing every object with another similar but different object, while keeping the sentence structure and overall tone similar.\n\n"
         f"Response Text: {response_text}"
     )
 
@@ -101,52 +105,19 @@ def hallucinate(client, response_text):
 
             return response.choices[0].message.content
         except RateLimitError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             time.sleep(60)
             continue
         except InternalServerError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             time.sleep(600)
             continue
         except Exception as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
             raise
-
-# # function to remove objects from an image
-# def remove_objects(seg_model, sd_pipe, image_path, image):
-#     # run image segmentation on image
-#     results = seg_model(image_path)
-
-#     if results[0].masks is None or results[0].masks.data is None:
-#         print("NO OBJECT DETECTED")
-#         return None
-#     else:
-#         # get all the segmentation masks
-#         masks = results[0].masks.data.cpu().numpy() # shape: (N, H, W)
-
-#         if masks.shape[0] > 1:
-#             # indices of masks that will be selected
-#             # randomly select any two masks
-#             selected_indices = random.sample(range(len(masks)), min(2, len(masks)))
-
-#             # combine the selected masks using logical OR
-#             selected_mask = np.logical_or(masks[selected_indices[0]], masks[selected_indices[1]])
-#         else:
-#             selected_mask = masks[0]
-
-#         # convert the mask to an image
-#         mask_image = Image.fromarray((selected_mask.astype("uint8") * 255), mode="L")
-
-#         # remove the segmented object
-#         removed_image = sd_pipe(prompt='Erase the object covered by the mask and make the surrounding area blend naturally', 
-#                              image=image, 
-#                              mask_image=mask_image).images[0]
-
-#         # open the original image
-#         return mask_image, removed_image
 
 # load the stable diffusion model
 # pipe = StableDiffusion3Pipeline.from_pretrained(
@@ -163,12 +134,12 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # # indexes of data point
-# idxs = [0,10,20,40,50,80,100,500,400,550,1000,1200,1500]
+# idxs = [0,15,25,45,55,85,105,505,405,555,1005,1205,1505]
 # for i in idxs:
 #     chosen_response = data[i]['chosen']
 #     summarized_chosen_response = summarize(openai_client, chosen_response)
 #     hallucinated_response = hallucinate(openai_client, summarized_chosen_response)
-#     print(f"QUESTION: {data[i]['prompt']}\n")
+#     #print(f"QUESTION: {data[i]['prompt']}\n")
 #     print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
 #     print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
 #     print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
@@ -190,7 +161,7 @@ responses_data = []
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
-for sample in random.sample(data, 6):
+for sample in random.sample(data, 4):
     # summarize the chosen response
     chosen_response_summarized = summarize(openai_client, sample['chosen'])
     # generate the hallucinated response
@@ -204,7 +175,7 @@ for sample in random.sample(data, 6):
     image_names.append(sample['img_path'])
 
 # figure for the original image and the custom images
-fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 20))
+fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 12))
 axes = axes.flatten()
 
 start = time.time()
@@ -216,7 +187,7 @@ for i in range(len(chosen)):
         chosen[i], # text prompt for generation
         height=640,
         width=640,
-        num_inference_steps=35, # no. of denoising steps for finer details
+        num_inference_steps=40, # no. of denoising steps for finer details
         guidance_scale=10.0, # strength of prompt adherence 
     ).images[0]
 
@@ -225,7 +196,7 @@ for i in range(len(chosen)):
         hallucinated[i], # text prompt for generation
         height=640,
         width=640,
-        num_inference_steps=35, # no. of denoising steps for finer details
+        num_inference_steps=40, # no. of denoising steps for finer details
         guidance_scale=10.0, # strength of prompt adherence 
     ).images[0]
 
@@ -260,12 +231,11 @@ plt.close()
 #     # generate the hallucinated response
 #     hallucinated_response = hallucinate(openai_client, chosen_response_summarized)
 
-#     responses_data.append({
-#         'chosen': sample['chosen'],
-#         'chosen_summarized': chosen_response_summarized,
-#         'hallucinated': hallucinated_response,
-#         'img_name': sample['img_path']
-#     })
+#     # get the original data point
+#     original = sample.copy()
+#     original['chosen_summarized'] = chosen_response_summarized
+#     original['hallucinated'] = hallucinated_response
+#     responses_data.append(original)
 
 #     chosen.append(chosen_response_summarized)
 #     hallucinated.append(hallucinated_response)
@@ -275,7 +245,7 @@ plt.close()
 #     image_names.append(sample['img_path'])
 
 # # save the generated responses
-# with open('mDPO/data/gen_responses.json', 'w') as f:
+# with open('mDPO/data/vlfeedback_llava_10k_gen.json', 'w') as f:
 #     json.dump(responses_data, f, indent=4)
 
 # for i in range(len(chosen)):
@@ -286,8 +256,8 @@ plt.close()
 #         chosen[i], # text prompt for generation
 #         height=512,
 #         width=512,
-#         num_inference_steps=28, # no. of denoising steps for finder details
-#         guidance_scale=7.0, # strength of prompt adherence 
+#         num_inference_steps=35, # no. of denoising steps for finder details
+#         guidance_scale=10.0, # strength of prompt adherence 
 #     ).images[0]
 #     # chosen image save path
 #     chosen_save_path = 'mDPO/data/chosen/' + image_names[i]
@@ -297,8 +267,8 @@ plt.close()
 #         hallucinated[i], # text prompt for generation
 #         height=512,
 #         width=512,
-#         num_inference_steps=28, # no. of denoising steps for finder details
-#         guidance_scale=7.0, # strength of prompt adherence 
+#         num_inference_steps=35, # no. of denoising steps for finder details
+#         guidance_scale=10.0, # strength of prompt adherence 
 #     ).images[0]
 #     # rejected image save path
 #     rejected_save_path = 'mDPO/data/rejected/' + image_names[i]
@@ -309,4 +279,4 @@ plt.close()
 #     if i % 50 == 0:
 #         print(f"COMPLETED {i+1}/{len(chosen)}")
 
-log_file.close()
+# log_file.close()
