@@ -41,7 +41,7 @@ def summarize(client, response_text):
     #     f"Response Text: {response_text}"
     # )
     prompt = (
-        "Summarize only the visual content described in the response text. "
+        "Summarize only the visual content described in the response text in one paragraph in less than 60 words. "
         "Do not include any assumptions, causes, intentions, or speculative interpretations. "
         "Only describe what is visually observable in the scene.\n\n"
         f"Response Text: {response_text}"
@@ -87,12 +87,11 @@ def hallucinate(client, response_text):
     #     "Rewrite the response text by replacing the most important object (the main subject of the scene ) with an object a multimodal LLM is most likely to hallucinate, while keeping the sentence structure and overall tone similar.\n\n"
     #     f"Response Text: {response_text}"
     # )
-    # prompt = (
-    #     "Rewrite the response text by replacing every object with another similar but different object, while keeping the sentence structure and overall tone similar.\n\n"
-    #     f"Response Text: {response_text}"
-    # )
     prompt = (
-        "Rewrite the response text by replacing every object with another similar but different object, while keeping the sentence structure and overall tone similar three times. Separate each rewritten response only using '__'.\n\n"
+        "Rewrite the response text using the following instructions.\n"
+        "1. Replace every object and its attribute with another similar but different object.\n"
+        "2. If there is a number replace it with another similar number.\n"
+        "3. Keep the original response text structure same by simply changing some words and phrases.\n"
         f"Response Text: {response_text}"
     )
 
@@ -107,9 +106,10 @@ def hallucinate(client, response_text):
                 temperature=0.0,
             )
 
-            responses = response_obj.choices[0].message.content.split('__')
+            return response_obj.choices[0].message.content
 
-            return [response.strip() for response in responses]
+            # responses = response_obj.choices[0].message.content.split('__')
+            # return [response.strip() for response in responses]
         except RateLimitError as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
@@ -129,8 +129,11 @@ def hallucinate(client, response_text):
 # pipe = StableDiffusion3Pipeline.from_pretrained(
 #     "stabilityai/stable-diffusion-3-medium-diffusers", 
 #     torch_dtype=torch.float16)
+# pipe = StableDiffusion3Pipeline.from_pretrained(
+#     "stabilityai/stable-diffusion-3.5-medium", 
+#     torch_dtype=torch.bfloat16)
 pipe = StableDiffusion3Pipeline.from_pretrained(
-    "stabilityai/stable-diffusion-3.5-medium", 
+    "stabilityai/stable-diffusion-3.5-large", 
     torch_dtype=torch.bfloat16)
 #pipe.enable_model_cpu_offload()
 pipe = pipe.to("cuda")
@@ -140,13 +143,18 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # # indexes of data point
-# idxs = [0]
+# idxs = [[i for i, x in enumerate(data) if x["img_path"]=="llava-detail-945.jpg"], 
+#         [i for i, x in enumerate(data) if x["img_path"]=="llava-detail-1945.jpg"],
+#         [i for i, x in enumerate(data) if x["img_path"]=="llava-detail-1845.jpg"],
+#         [i for i, x in enumerate(data) if x["img_path"]=="llava-reasoning-3784.jpg"],
+#         [i for i, x in enumerate(data) if x["img_path"]=="llava-detail-157.jpg"]]
+# idxs = [idx for idx_list in idxs for idx in idx_list]
 # for i in idxs:
 #     chosen_response = data[i]['chosen']
 #     summarized_chosen_response = summarize(openai_client, chosen_response)
 #     hallucinated_response = hallucinate(openai_client, summarized_chosen_response)
 #     #print(f"QUESTION: {data[i]['prompt']}\n")
-#     print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
+#     #print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
 #     print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
 #     print(f"HALLUCINATED RESPONSES: {hallucinated_response}\n\n")
 
@@ -235,16 +243,16 @@ for sample in tqdm(data, desc='Generating Responses'):
     # summarize the chosen response
     chosen_response_summarized = summarize(openai_client, sample['chosen'])
     # generate the hallucinated response
-    hallucinated_responses = hallucinate(openai_client, chosen_response_summarized)
+    hallucinated_response = hallucinate(openai_client, chosen_response_summarized)
 
     # get the original data point
     original = sample.copy()
     original['chosen_summarized'] = chosen_response_summarized
-    original['hallucinated'] = hallucinated_responses
+    original['hallucinated'] = hallucinated_response
     responses_data.append(original)
 
     chosen.append(chosen_response_summarized)
-    hallucinated.append(hallucinated_responses)
+    hallucinated.append(hallucinated_response)
     #rejected.append(summarize(openai_client, sample['rejected']))
     images.append(Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB"))
     image_paths.append('mDPO/data/merged_images/' + sample['img_path'])
@@ -269,20 +277,19 @@ for i in range(len(chosen)):
     chosen_save_path = 'mDPO/data/chosen/' + image_names[i]
     chosen_image.save(chosen_save_path)
 
-    for j in range(len(hallucinated[i])):
-        # generate the rejected images
-        rejected_image = pipe(
-            hallucinated[i][j], # text prompt for generation
-            height=512,
-            width=512,
-            num_inference_steps=40, # no. of denoising steps for finder details
-            guidance_scale=10.0, # strength of prompt adherence 
-        ).images[0]
-        # rejected image save path
-        rejected_save_path = f'mDPO/data/rejected/{j}' + image_names[i]
-        rejected_image.save(rejected_save_path)
+    # generate the rejected images
+    rejected_image = pipe(
+        hallucinated[i], # text prompt for generation
+        height=512,
+        width=512,
+        num_inference_steps=40, # no. of denoising steps for finder details
+        guidance_scale=10.0, # strength of prompt adherence 
+    ).images[0]
+    # rejected image save path
+    rejected_save_path = f'mDPO/data/rejected/' + image_names[i]
+    rejected_image.save(rejected_save_path)
 
-    if i % 50 == 0:
+    if i % 10 == 0:
         print(f"COMPLETED {i+1}/{len(chosen)}")
 
 log_file.close()
