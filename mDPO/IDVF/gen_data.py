@@ -6,11 +6,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 from openai import OpenAI, RateLimitError, InternalServerError
-#from ultralytics import YOLO
-from torchvision import transforms
-import numpy as np
-from tqdm import tqdm
-import time
+import json
 
 # set device
 device = torch.device("cuda")
@@ -85,15 +81,18 @@ def hallucinate(client, response_text):
 # pipe = StableDiffusion3Pipeline.from_pretrained(
 #     "stabilityai/stable-diffusion-3.5-medium", 
 #     torch_dtype=torch.bfloat16)
-# pipe = StableDiffusion3Pipeline.from_pretrained(
-#     "stabilityai/stable-diffusion-3.5-large", 
-#     torch_dtype=torch.bfloat16)
-# #pipe.enable_model_cpu_offload()
-# pipe = pipe.to("cuda")
+pipe = StableDiffusion3Pipeline.from_pretrained(
+    "stabilityai/stable-diffusion-3.5-large", 
+    torch_dtype=torch.bfloat16)
+#pipe.enable_model_cpu_offload()
+pipe = pipe.to("cuda")
 
 # open the training data json file
-with open('data/vlfeedback_llava_10k.json', 'r') as file:
+with open('./data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
+
+# list to save the data
+save_data = []
 
 # # indexes of data point
 # idxs = [[i for i, x in enumerate(data) if x["img_path"]=="llava-detail-945.jpg"], 
@@ -103,17 +102,46 @@ with open('data/vlfeedback_llava_10k.json', 'r') as file:
 #         [i for i, x in enumerate(data) if x["img_path"]=="llava-detail-157.jpg"]]
 # idxs = [idx for idx_list in idxs for idx in idx_list]
 for i in [0,10,50,80,100]:
-    chosen_response = data[i]['chosen']
+    original = data[i].copy()
+    # get the chosen response
+    chosen_response = original['chosen']
+    # summarize the chosen response
     summarized_chosen_response = summarize(openai_client, chosen_response)
+    # create a hallucinated version by replacing one of the object
     hallucinated_output = hallucinate(openai_client, summarized_chosen_response).split('__')
 
+    # get the object that was replaced
     hallucinated_obj = hallucinated_output[0].strip()
+    # hallucinated response with the object replaced
     hallucinated_response = hallucinated_output[1].strip()
-    #print(f"QUESTION: {data[i]['prompt']}\n")
-    #print(f"ORIGINAL CHOSEN RESPONSE: {chosen_response}\n")
-    print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
-    print(f"HALLUCINATED OBJECT: {hallucinated_obj}")
-    print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
+
+    # generate the hallucinated image
+    hall_image = pipe(
+        hallucinated_response, # text prompt for generation
+        height=640,
+        width=640,
+        num_inference_steps=40, # no. of denoising steps for finer details
+        guidance_scale=10.0, # strength of prompt adherence 
+    ).images[0]
+    
+    # print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
+    # print(f"HALLUCINATED OBJECT: {hallucinated_obj}")
+    # print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
+
+    # save the generated data in a json file
+    original['chosen_summarized'] = summarized_chosen_response
+    original['hallucinated_obj'] = hallucinated_obj
+    original['hallucinated_response'] = hallucinated_response
+    save_data.append(original)
+
+    # image name
+    img_name = original['img_path']
+    # save the hallucinated image
+    hall_image.save('./IDVF/hall_images/' + img_name)
+
+# save the generated responses
+with open('./IDVF/idvf_data.json', 'w') as f:
+    json.dump(save_data, f, indent=4)
 
 # # list of summarized chosen responses
 # chosen = []
