@@ -49,10 +49,10 @@ with open('./IDVF/idvf_data.json', 'r') as file:
 
 for sample in data:
     image_name = sample['img_path']
-    hall_obj = sample['hallucinated_obj']
+    replaced_obj = sample['replaced_obj']
 
     # query
-    query = f'Answer the question using only Yes or No. Is there a {hall_obj} in the image?'
+    query = f'Answer the question using only YES or NO. Is there a {replaced_obj} in the image?'
     text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
     text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
     input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
