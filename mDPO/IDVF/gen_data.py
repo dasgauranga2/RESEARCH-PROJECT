@@ -12,6 +12,12 @@ device = torch.device("cuda")
 with open("MMHal-Bench/api.txt", "r") as f:
     API_KEY = f.read().strip()
 
+# open the text file for logging errors
+with open("./IDVF/log.txt", "w") as f:
+    f.write("LOG STARTED\n")
+# open the text file in append mode
+log_file = open("./IDVF/log.txt", "a")
+
 # openai client
 openai_client = OpenAI(api_key=API_KEY)
 
@@ -36,6 +42,8 @@ def summarize(client, response_text):
 
             return response.choices[0].message.content
         except Exception as error:
+            log_file.write(f"ERROR: {str(error)}\n")
+            log_file.flush()
             raise
             
 # function to create a hallucinated version of response text
@@ -50,7 +58,7 @@ def hallucinate(client, response_text):
     response = None
     while response is None:
         try:
-            response_obj = client.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4o-mini-2024-07-18",
                 messages=[
                     {"role": "user", "content": prompt}
@@ -58,11 +66,10 @@ def hallucinate(client, response_text):
                 temperature=0.0,
             )
 
-            return response_obj.choices[0].message.content
-
-            # responses = response_obj.choices[0].message.content.split('__')
-            # return [response.strip() for response in responses]
+            return response.choices[0].message.content
         except Exception as error:
+            log_file.write(f"ERROR: {str(error)}\n")
+            log_file.flush()
             raise
 
 # load the stable diffusion model
@@ -79,7 +86,7 @@ with open('./data/vlfeedback_llava_10k.json', 'r') as file:
 # list to save the data
 save_data = []
 
-for sample in random.sample(data, 50):
+for sample in random.sample(data, 500):
     original = sample.copy()
 
     # get the chosen response
@@ -87,37 +94,65 @@ for sample in random.sample(data, 50):
     # summarize the chosen response
     summarized_chosen_response = summarize(openai_client, chosen_response)
     # create a hallucinated version by replacing one of the object
-    hallucinated_output = hallucinate(openai_client, summarized_chosen_response).split('__')
+    hallucinated_output = hallucinate(openai_client, summarized_chosen_response)
 
-    # get the object that was replaced
-    replaced_obj = hallucinated_output[0].strip()
-    # hallucinated response with the object replaced
-    hallucinated_response = hallucinated_output[1].strip()
-
-    # generate the hallucinated image
-    hall_image = pipe(
-        hallucinated_response, # text prompt for generation
-        height=640,
-        width=640,
-        num_inference_steps=40, # no. of denoising steps for finer details
-        guidance_scale=10.0, # strength of prompt adherence 
-    ).images[0]
+    # check if the sepration exists
+    if '__' not in hallucinated_output:
+        log_file.write(f"NO SEPARATION: {hallucinated_output}\n")
+        log_file.flush()
+        continue
     
-    # print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
-    # print(f"HALLUCINATED OBJECT: {hallucinated_obj}")
-    # print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
+    # separate the object and text
+    hallucinated_output = hallucinated_output.split('__')
 
-    # append the generated data
-    original['chosen_summarized'] = summarized_chosen_response
-    original['replaced_obj'] = replaced_obj
-    original['hallucinated_response'] = hallucinated_response
-    save_data.append(original)
+    try:
+        # get the object that was replaced
+        replaced_obj = hallucinated_output[0].strip()
+        # hallucinated response with the object replaced
+        hallucinated_response = hallucinated_output[1].strip()
 
-    # image name
-    img_name = original['img_path']
-    # save the hallucinated image
-    hall_image.save('./IDVF/hall_images/' + img_name)
+        if ':' in replaced_obj:
+            log_file.write(f"COLON IN OBJECT: {replaced_obj}\n")
+            replaced_obj = replaced_obj.split(':')[-1].strip()
+            log_file.write(f"NEW OBJECT: {replaced_obj}\n")
+            log_file.flush()
+
+        if ':' in hallucinated_response:
+            log_file.write(f"COLON IN RESPONSE TEXT: {hallucinated_response}\n")
+            hallucinated_response = hallucinated_response.split(':')[-1].strip()
+            log_file.write(f"NEW OBJRESPONSE TExT: {hallucinated_response}\n")
+            log_file.flush()
+
+        # generate the hallucinated image
+        hall_image = pipe(
+            hallucinated_response, # text prompt for generation
+            height=640,
+            width=640,
+            num_inference_steps=40, # no. of denoising steps for finer details
+            guidance_scale=10.0, # strength of prompt adherence 
+        ).images[0]
+        
+        # print(f"SUMMARY CHOSEN RESPONSE: {summarized_chosen_response}\n")
+        # print(f"HALLUCINATED OBJECT: {hallucinated_obj}")
+        # print(f"HALLUCINATED RESPONSE: {hallucinated_response}\n\n")
+
+        # append the generated data
+        original['chosen_summarized'] = summarized_chosen_response
+        original['replaced_obj'] = replaced_obj
+        original['hallucinated_response'] = hallucinated_response
+        save_data.append(original)
+
+        # image name
+        img_name = original['img_path']
+        # save the hallucinated image
+        hall_image.save('./IDVF/hall_images/' + img_name)
+    except Exception as error:
+        log_file.write(f"ERROR: {str(error)}\n")
+        log_file.flush()
+        raise
 
  # save the generated data in a json file
 with open('./IDVF/idvf_data.json', 'w') as f:
     json.dump(save_data, f, indent=4)
+
+log_file.close()
