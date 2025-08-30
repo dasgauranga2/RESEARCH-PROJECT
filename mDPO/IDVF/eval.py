@@ -5,6 +5,7 @@ from PIL import Image
 import warnings
 from peft import PeftModel
 import json
+from tqdm import tqdm
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -43,12 +44,17 @@ tokenizer = AutoTokenizer.from_pretrained(
     checkpoint_path,
     trust_remote_code=True)
 
-# open the training data json file
+# open the evaluation data json file
 with open('./IDVF/idvf_data.json', 'r') as file:
     data = json.load(file)
 
-for sample in data:
+correct = 0
+total = 0
+
+for sample in tqdm(data, desc='Evaluating responses'):
+    # image name
     image_name = sample['img_path']
+    # object that was replaced in the summarzied chosen response
     replaced_obj = sample['replaced_obj']
 
     # query
@@ -71,4 +77,11 @@ for sample in data:
     )[0]
 
     # display the generated text
-    print(tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip())
+    response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip().lower()
+
+    if response=='yes' or response=='no':
+        total += 1
+        if response=='no':
+            correct += 1
+
+print(f"Accuracy: {(correct/total)*100:.2f}%")
