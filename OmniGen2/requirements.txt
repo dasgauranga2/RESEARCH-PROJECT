@@ -1,0 +1,24 @@
+# git clone https://github.com/VectorSpaceLab/OmniGen2
+# conda create -n omnigen2 python=3.11
+# conda activate omnigen2
+# pip install torch==2.6.0 torchvision --extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+timm==1.0.19
+einops==0.8.1
+accelerate==1.10.1
+transformers==4.51.3
+diffusers==0.35.1
+opencv-python-headless
+scipy==1.16.1
+wandb==0.21.3
+matplotlib==3.10.6
+Pillow==11.3.0
+tqdm
+omegaconf
+python-dotenv
+ninja
+ipykernel
+wheel
+triton-windows; sys_platform == "win32"
+# pip install flash-attn==2.7.4.post1 --no-build-isolation
