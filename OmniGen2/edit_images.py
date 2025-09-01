@@ -1,9 +1,7 @@
 import dotenv
 dotenv.load_dotenv(override=True)
 import random
-import os
-from typing import List, Tuple
-from PIL import Image, ImageOps
+from PIL import Image
 import torch
 import matplotlib.pyplot as plt
 from accelerate import Accelerator
@@ -43,7 +41,6 @@ def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGe
             torch_dtype=weight_dtype,
         )
 
-
     # optimization options 
     # see Github repo for explanations
     # pipeline.enable_taylorseer = True
@@ -51,7 +48,7 @@ def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGe
     # pipeline.transformer.teacache_rel_l1_thresh = args.teacache_rel_l1_thresh
 
     # scheduler options: euler, dpmsolver++
-    scheduler_type = 'euler'
+    scheduler_type = "dpmsolver++"
 
     if scheduler_type == "dpmsolver++":
         from omnigen2.schedulers.scheduling_dpmsolver_multistep import DPMSolverMultistepScheduler
@@ -64,8 +61,8 @@ def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGe
         pipeline.scheduler = scheduler
 
     #pipeline.enable_sequential_cpu_offload()
-    pipeline.enable_model_cpu_offload()
-    #pipeline = pipeline.to(accelerator.device)
+    #pipeline.enable_model_cpu_offload()
+    pipeline = pipeline.to(accelerator.device)
 
     return pipeline
 
@@ -76,9 +73,9 @@ def run(accelerator, pipeline, instruction, negative_prompt, input_image):
     result = pipeline(
         prompt=instruction,
         input_images=[input_image],
-        width=1024, # output image width
-        height=1024, # output image height
-        num_inference_steps=50, # no. of inference steps
+        width=640, # output image width
+        height=640, # output image height
+        num_inference_steps=30, # no. of inference steps
         max_sequence_length=1024,
         text_guidance_scale=5.0, # controls how strictly the output adheres to the text prompt
         image_guidance_scale=2.0, # controls how much the final image should resemble the input reference image
@@ -95,7 +92,7 @@ def replace(client, response_text):
     prompt = (
         "Pick the most important object (the main subject) in the response text.\n"
         "Suggest an object that is visually similar to the most important object but different.\n"
-        "Separate the suggested object and most important object using only '__'.\n"
+        "Write the most important object and the suggested object and separate them using only '__'.\n"
         f"Response Text: {response_text}"
     )
     response = None
@@ -149,6 +146,8 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
 images = []
 # list of edited images
 edited_images = []
+# list of prompts
+prompts = []
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 
@@ -158,7 +157,7 @@ for sample in random.sample(data, 4):
     chosen = sample['chosen']
     image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
 
-    # replace one of the obejct in the chosen response with another object
+    # replace one of the object in the chosen response with another object
     replaced_text = replace(openai_client, chosen)
     # print(f"CHOSEN: {chosen}\n")
     # print(f"REPLACED: {replaced_text}\n\n")
@@ -184,6 +183,7 @@ for sample in random.sample(data, 4):
 
     images.append(image)
     edited_images.append(edited_image)
+    prompts.append(prompt)
 
 # figure for the original image and the edited images
 fig, axes = plt.subplots(len(images), 2, figsize=(10, 12))
@@ -193,7 +193,7 @@ for i in range(len(images)):
 
     # plot the original image
     axes[(i*2)].imshow(images[i])
-    axes[(i*2)].set_title("Original Image")
+    axes[(i*2)].set_title(prompts[i])
     axes[(i*2)].axis('off')
 
     # plot the chosen image
