@@ -1,40 +1,44 @@
 import dotenv
-
 dotenv.load_dotenv(override=True)
-
-import argparse
+import random
 import os
 from typing import List, Tuple
-
 from PIL import Image, ImageOps
-
 import torch
-from torchvision.transforms.functional import to_pil_image, to_tensor
-
+import matplotlib.pyplot as plt
 from accelerate import Accelerator
 from diffusers.hooks import apply_group_offloading
-
+from openai import OpenAI, RateLimitError, InternalServerError
 from omnigen2.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
 from omnigen2.models.transformers.transformer_omnigen2 import OmniGen2Transformer2DModel
+import time
+import json
 
 # path of model
-MODEL_PATH = "OmniGen2/OmniGen2"
-# INFERENCE STEPS
-INF_STEPS = 50 
-# INPUT IMAGE PATH
-INPUT_PATH = 'example_images/test3.png'
-# 
-OUTPUT_PATH =  'outputs/output_edit.png'
+MODEL_NAME = "OmniGen2/OmniGen2"
+
+# get the OpenAI API key
+with open("mDPO/MMHal-Bench/api.txt", "r") as f:
+    API_KEY = f.read().strip()
+
+# openai client
+openai_client = OpenAI(api_key=API_KEY)
+
+# # open the text file for logging errors
+# with open("OmniGen2/log.txt", "w") as f:
+#     f.write("LOG STARTED\n")
+# # open the text file in append mode
+# log_file = open("OmniGen2/log.txt", "a")
 
 def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGen2Pipeline:
     pipeline = OmniGen2Pipeline.from_pretrained(
-        MODEL_PATH,
+        MODEL_NAME,
         torch_dtype=weight_dtype,
         trust_remote_code=True,
     )
     
     pipeline.transformer = OmniGen2Transformer2DModel.from_pretrained(
-            MODEL_PATH,
+            MODEL_NAME,
             subfolder="transformer",
             torch_dtype=weight_dtype,
         )
@@ -65,37 +69,13 @@ def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGe
 
     return pipeline
 
-def preprocess(input_image_path: List[str] = []) -> Tuple[str, str, List[Image.Image]]:
-    """Preprocess the input images."""
-    # Process input images
-    input_images = None
-
-    if input_image_path:
-        input_images = []
-        if isinstance(input_image_path, str):
-            input_image_path = [input_image_path]
-
-        if len(input_image_path) == 1 and os.path.isdir(input_image_path[0]):
-            input_images = [Image.open(os.path.join(input_image_path[0], f)).convert("RGB")
-                          for f in os.listdir(input_image_path[0])]
-        else:
-            input_images = [Image.open(path).convert("RGB") for path in input_image_path]
-
-        input_images = [ImageOps.exif_transpose(img) for img in input_images]
-
-    return input_images
-
-def run(accelerator: Accelerator, 
-        pipeline: OmniGen2Pipeline, 
-        instruction: str, 
-        negative_prompt: str, 
-        input_images: List[Image.Image]) -> Image.Image:
+def run(accelerator, pipeline, instruction, negative_prompt, input_image):
     """Run the image generation pipeline with the given parameters."""
     generator = torch.Generator(device=accelerator.device).manual_seed(0)
 
-    results = pipeline(
+    result = pipeline(
         prompt=instruction,
-        input_images=input_images,
+        input_images=[input_image],
         width=1024, # output image width
         height=1024, # output image height
         num_inference_steps=50, # no. of inference steps
@@ -108,62 +88,122 @@ def run(accelerator: Accelerator,
         generator=generator,
         output_type="pil",
     )
-    return results
+    return result.images[0]
 
-def create_collage(images: List[torch.Tensor]) -> Image.Image:
-    """Create a horizontal collage from a list of images."""
-    max_height = max(img.shape[-2] for img in images)
-    total_width = sum(img.shape[-1] for img in images)
-    canvas = torch.zeros((3, max_height, total_width), device=images[0].device)
-    
-    current_x = 0
-    for img in images:
-        h, w = img.shape[-2:]
-        canvas[:, :h, current_x:current_x+w] = img * 0.5 + 0.5
-        current_x += w
-    
-    return to_pil_image(canvas)
+# function to replace an object in the response text
+def replace(client, response_text):
+    prompt = (
+        "Pick the most important object (the main subject) in the response text.\n"
+        "Suggest an object that is visually similar to the most important object but different.\n"
+        "Separate the suggested object and most important object using only '__'.\n"
+        f"Response Text: {response_text}"
+    )
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
 
-def main() -> None:
-    """Main function to run the image generation process."""
-    # available data types: 'fp32', 'fp16', 'bf16'
-    data_type = 'bf16'
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
+            time.sleep(60)
+            continue
+        except InternalServerError as error:
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
+            time.sleep(600)
+            continue
+        except Exception as error:
+            #log_file.write(f"{str(error)}\n")
+            #log_file.flush()
+            raise
 
-    # Initialize accelerator
-    accelerator = Accelerator(mixed_precision=data_type if data_type != 'fp32' else 'no')
+# available data types: 'fp32', 'fp16', 'bf16'
+data_type = 'bf16'
 
-    # Set weight dtype
-    weight_dtype = torch.float32
-    if data_type == 'fp16':
-        weight_dtype = torch.float16
-    elif data_type == 'bf16':
-        weight_dtype = torch.bfloat16
+# initialize accelerator
+accelerator = Accelerator(mixed_precision=data_type if data_type != 'fp32' else 'no')
 
-    # Load pipeline and process inputs
-    pipeline = load_pipeline(accelerator, weight_dtype)
-    input_images = preprocess(INPUT_PATH)
+# set weight dtype
+weight_dtype = torch.float32
+if data_type == 'fp16':
+    weight_dtype = torch.float16
+elif data_type == 'bf16':
+    weight_dtype = torch.bfloat16
+
+# load image editing pipeline
+pipeline = load_pipeline(accelerator, weight_dtype)
+
+# open the training data json file
+with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
+    data = json.load(file)
+
+# list of original images
+images = []
+# list of edited images
+edited_images = []
+
+# RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
+
+start = time.time()
+# iterate through the data
+for sample in random.sample(data, 4):
+    chosen = sample['chosen']
+    image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
+
+    # replace one of the obejct in the chosen response with another object
+    replaced_text = replace(openai_client, chosen)
+    # print(f"CHOSEN: {chosen}\n")
+    # print(f"REPLACED: {replaced_text}\n\n")
+
+    if '__' not in replaced_text:
+        print(f"INVALID REPLACED TEXT: {replaced_text}")
+        continue
+
+    objects = replaced_text.split('__')
+    # object to be replaced
+    obj1 = objects[0].strip()
+    # object that we will replace with
+    obj2 = objects[1].strip()
 
     # prompt text
-    prompt = 'Replace the cat with a dog.'
+    prompt = f'Replace the {obj1} with {obj2}.'
     # negative prompt text
     # tells the model what you don't want to see in the image
     negative_prompt = "(((deformed))), blurry, over saturation, bad anatomy, disfigured, poorly drawn face, mutation, mutated, (extra_limb), (ugly), (poorly drawn hands), fused fingers, messy drawing, broken legs censor, censored, censor_bar"
 
-    # Generate and save image
-    results = run(accelerator, pipeline, prompt, negative_prompt, input_images)
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    # edit the image
+    edited_image = run(accelerator, pipeline, prompt, negative_prompt, image)
 
-    if len(results.images) > 1:
-        for i, image in enumerate(results.images):
-            image_name, ext = os.path.splitext(OUTPUT_PATH)
-            image.save(f"{image_name}_{i}{ext}")
+    images.append(image)
+    edited_images.append(edited_image)
 
-    vis_images = [to_tensor(image) * 2 - 1 for image in results.images]
-    output_image = create_collage(vis_images)
+# figure for the original image and the edited images
+fig, axes = plt.subplots(len(images), 2, figsize=(10, 12))
+axes = axes.flatten()
 
-    output_image.save(OUTPUT_PATH)
-    print(f"Image saved to {OUTPUT_PATH}")
+for i in range(len(images)):
 
-if __name__ == "__main__":
-    #root_dir = os.path.abspath(os.path.join(__file__, os.path.pardir))
-    main()
+    # plot the original image
+    axes[(i*2)].imshow(images[i])
+    axes[(i*2)].set_title("Original Image")
+    axes[(i*2)].axis('off')
+
+    # plot the chosen image
+    axes[(i*2)+1].imshow(edited_images[i])
+    axes[(i*2)+1].set_title("Edited Image")
+    axes[(i*2)+1].axis('off')
+
+# save the images
+plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
+
+end = time.time()
+print(f"TIME TAKEN: {(end-start):.2f} seconds")
