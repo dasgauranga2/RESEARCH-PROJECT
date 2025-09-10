@@ -15,6 +15,10 @@ from diffusers import UNet2DConditionModel, DiffusionPipeline, LCMScheduler
 import torch, cv2
 from PIL import Image
 import copy
+from openai import OpenAI, RateLimitError, InternalServerError
+import json
+import time
+import random
 
 # set device
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -340,10 +344,10 @@ def inference(img, source_prompt, target_prompt,
           cross_replace_steps, self_replace_steps, 
           thresh_e, thresh_m, denoise, user_instruct="", api_key="",shape_change=[]):
 
-    if user_instruct != "" and api_key != "":
-        source_prompt, target_prompt, local, mutual, replace_steps, num_inference_steps = get_params(api_key, user_instruct)
-        cross_replace_steps = replace_steps
-        self_replace_steps = replace_steps
+    # if user_instruct != "" and api_key != "":
+    #     source_prompt, target_prompt, local, mutual, replace_steps, num_inference_steps = get_params(api_key, user_instruct)
+    #     cross_replace_steps = replace_steps
+    #     self_replace_steps = replace_steps
 
     assert len(target_prompt) == len(local)
     torch.manual_seed(seed)
@@ -613,79 +617,246 @@ def get_edits_type(ac, obj_pairs, global_edit):
         # print( non_rigid_obj, rigid_obj, global_edit)
     return non_rigid_obj, rigid_obj, global_edit
 
-# data sample to edit
-dataset = {
-    # path of image
-    "image_path": "./ParallelEdits/imgs/example.jpg",
-    # text describing the image
-    "source_prompt": "a man sitting in a boat is silhouetted against the sunset with mountain in the background",
-    # text which will describe the image we want
-    "target_prompt": "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background",
-    # dictionary which contains the individual editing instructions
-    "editing":{"man standing":{"position":2,"edit_type":5,"action":"man sitting"}, "ducks on the water":{"position":11,"edit_type":2,"action":"+"},"Alps mountain":{"position":12,"edit_type":1,"action":"mountain"}}, 
-    "obj-adj-pair":{"man":["standing"],"ducks":[],"mountain":["Alps"]}}
-    
-# image, prompts and hyperparameters for generation
-img, source_prompt, target_prompt, \
-          local, mutual, \
-          positive_prompt, negative_prompt, \
-          guidance_s, guidance_t, \
-          test_num_inference_steps,num_inference_steps, \
-          width, height, seed, strength,           \
-          cross_replace_steps, self_replace_steps,  \
-          thresh_e, thresh_m, denoise = dataset['image_path'], \
-            dataset['source_prompt'], [dataset['source_prompt'], dataset['target_prompt'].replace("[", "").replace("]", "")], ["",""],  \
-            "","","",1,[3],5, 15,512,512,0,1,0.7,0.7,0.5,0.8,False
+# get the OpenAI API key
+with open("mDPO/MMHal-Bench/api.txt", "r") as f:
+    API_KEY = f.read().strip()
 
-# open the image file
-img_file = Image.open(img).resize((width, height))
+# openai client
+openai_client = OpenAI(api_key=API_KEY)
 
-# run inference without actually editing the image
-# this collects attention maps
-aspect_cluters = inference(img_file, source_prompt, target_prompt,
-          local, mutual,
-          positive_prompt, negative_prompt,
-          guidance_s, guidance_t,
-          test_num_inference_steps, #num_inference_steps,
-          width, height, seed, strength,          
-          cross_replace_steps, self_replace_steps, 
-          thresh_e, thresh_m, denoise,[1])
+# open the text file for logging errors
+with open("ParallelEdits/log.txt", "w") as f:
+    f.write("LOG STARTED\n")
+# open the text file in append mode
+log_file = open("ParallelEdits/log.txt", "a")
 
-obj_pairs, global_edit = get_obj_pair(dataset)
-non_rigid_obj, rigid_obj, global_edit = get_edits_type(aspect_cluters, obj_pairs, global_edit)
-rigid_objs = aspect_clustering(aspect_cluters, rigid_obj)
-non_rigid_objs = aspect_clustering(aspect_cluters, non_rigid_obj)
+# function to summarize a response text
+def summarize(client, response_text):
+    # prompt = (
+    #     "Summarize only the visual content described in the response text in one sentence. "
+    #     "Do not include any assumptions, causes, intentions, or speculative interpretations. "
+    #     "If there are multiple clauses separate them using 'and'. "
+    #     "Don't use any punctuation. "
+    #     "Only describe what is visually observable in the scene.\n\n"
+    #     f"Response Text: {response_text}"
+    # )
+    prompt = (
+        "Summarize only the visual content of the response text in one sentence under 60 words. "
+        "Only describe what is visually observable in the scene. "
+        "Do not include assumptions, causes, intentions, or speculation. "
+        "Write only factual descriptions of objects, people, or scenes. "
+        "If there are multiple clauses connect them with 'and'. "
+        "Do not use punctuation or filler phrases like 'the image shows' or 'there are'. "
+        "Write everything in lowercase.\n\n"
+        f"Response Text: {response_text}"
+    )
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
+
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
+
+# function to tag every object
+def tag_object(client, response_text):
+    prompt = (
+        "You will receive a sentence that describes a scene.\n"
+        "Task: tag every OBJECT NOUN head that belongs to one of these categories:\n"
+        "- people (person, man, woman, boy, girl, players)\n"
+        "- animals (dog, cat, horse, bird, bull, elephant)\n"
+        "- vehicles (bus, car, truck, bicycle, scooter, airplane, boat)\n"
+        "- foods and drinks (pizza, banana, sandwich, hot dog, soda, coffee, tea, beer, water, bottle of cola)\n"
+        "- clothing (jersey, shorts, shoes, hat, coat, dress)\n"
+        "- tools and equipment (bat, glove, racket, camera, phone, laptop)\n"
+        "- furniture and appliances (table, chair, sofa, bed, refrigerator, oven, coffee maker)\n"
+        "- containers (bottle, can, cup, bowl, suitcase, bag, basket)\n"
+        "- electronics (television, laptop, phone, microwave)\n"
+        "- signs or written objects (street sign, billboard)\n"
+        "DO NOT tag noun heads which don't belong to any of the above categories.\n"
+        "Wrap each identified object noun head with tags <obj1>...</obj1>, <obj2>...</obj2>, etc., from left to right.\n"
+        "Do NOT change any token, spacing, order, or words. Do NOT paraphrase. Do NOT add or remove text.\n"
+        "Output ONLY the tagged sentence."
+        f"\n\nsentence: {response_text}"
+    )
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
+
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
+
+# function to create a hallucinated version of response text
+def hallucinate(client, response_text):
+    prompt = (
+        "Rewrite the sentence by replacing EVERY visual noun phrase (object) with a visually similar but different object. "
+        "Keep the sentence structure IDENTICAL: same number of clauses, same order, same 'and' separators, same prepositions. "
+        "Do NOT change non-object words (quantifiers like several/various, verbs, adjectives that are not object heads, scene words like setting/atmosphere). "
+        "Preserve numbers and singular/plural. No added or removed clauses. No new attributes. "
+        "Output must be lowercase and contain no punctuation. "
+        "Output ONLY the rewritten sentence. "
+        f"sentence: {response_text}"
+    )
+
+    response = None
+    while response is None:
+        try:
+            response_obj = client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
+
+            return response_obj.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
+
+# open the training data json file
+with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
+    data = json.load(file)
+
+for sample in random.sample(data, 10):
+    # get the chosen response
+    chosen = sample['chosen']
+    # get the image path
+    img_path = 'mDPO/data/merged_images/' + sample['img_path']
+
+    # summarize the chosen response in one sentence without any punctuation
+    chosen_response_summarized = summarize(openai_client, chosen)
+    # tag every object in the summarized chosen response
+    tagged_crs = tag_object(openai_client, chosen_response_summarized)
+
+    #print(f"CHOSEN: {chosen}")
+    print(f"CHOSEN SUMMARIZED: {chosen_response_summarized}")
+    print(f"CHOSEN TAGGED: {tagged_crs}\n")
+    #print(f"HALLUCINATED: {hallucinated}\n")
+
+# # data sample to edit
+# dataset = {
+#     # path of image
+#     "image_path": "./ParallelEdits/imgs/example.jpg",
+#     # text describing the image
+#     "source_prompt": "a man sitting in a boat is silhouetted against the sunset with mountain in the background",
+#     # text which will describe the image we want
+#     "target_prompt": "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background",
+#     # dictionary which contains the individual editing instructions
+#     "editing":{"man standing":{"position":2,"edit_type":5,"action":"man sitting"}, "ducks on the water":{"position":11,"edit_type":2,"action":"+"},"Alps mountain":{"position":12,"edit_type":1,"action":"mountain"}}, 
+#     "obj-adj-pair":{"man":["standing"],"ducks":[],"mountain":["Alps"]}}
+
+# # image, prompts and hyperparameters for generation
+# img, source_prompt, target_prompt, \
+#           local, mutual, \
+#           positive_prompt, negative_prompt, \
+#           guidance_s, guidance_t, \
+#           test_num_inference_steps,num_inference_steps, \
+#           width, height, seed, strength,           \
+#           cross_replace_steps, self_replace_steps,  \
+#           thresh_e, thresh_m, denoise = dataset['image_path'], \
+#             dataset['source_prompt'], [dataset['source_prompt'], dataset['target_prompt'].replace("[", "").replace("]", "")], ["",""],  \
+#             "","","",1,[3],5, 15,512,512,0,1,0.7,0.7,0.5,0.8,False
+
+# # open the image file
+# img_file = Image.open(img).resize((width, height))
+
+# # run inference without actually editing the image
+# # this collects attention maps
+# aspect_cluters = inference(img_file, source_prompt, target_prompt,
+#           local, mutual,
+#           positive_prompt, negative_prompt,
+#           guidance_s, guidance_t,
+#           test_num_inference_steps, #num_inference_steps,
+#           width, height, seed, strength,          
+#           cross_replace_steps, self_replace_steps, 
+#           thresh_e, thresh_m, denoise,[1])
+
+# obj_pairs, global_edit = get_obj_pair(dataset)
+# non_rigid_obj, rigid_obj, global_edit = get_edits_type(aspect_cluters, obj_pairs, global_edit)
+# rigid_objs = aspect_clustering(aspect_cluters, rigid_obj)
+# non_rigid_objs = aspect_clustering(aspect_cluters, non_rigid_obj)
 
 
-editing_prompts = []
-blended_word_list = []
-for obj in rigid_objs:
-    editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-    blended_word_list.append(" ".join(obj))
-    editing_prompts.append(editing_prompt)
-rigid_num = len(editing_prompts)
+# editing_prompts = []
+# blended_word_list = []
+# for obj in rigid_objs:
+#     editing_prompt, dataset = generate_editing_prompt(dataset,obj)
+#     blended_word_list.append(" ".join(obj))
+#     editing_prompts.append(editing_prompt)
+# rigid_num = len(editing_prompts)
 
-for obj in non_rigid_objs:
-    editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-    blended_word_list.append(" ".join(obj))
-    editing_prompts.append(editing_prompt)
+# for obj in non_rigid_objs:
+#     editing_prompt, dataset = generate_editing_prompt(dataset,obj)
+#     blended_word_list.append(" ".join(obj))
+#     editing_prompts.append(editing_prompt)
 
-if len(global_edit) > 0:
-    for obj in [global_edit]:
-        editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-        blended_word_list.append("")
-        editing_prompts.append(editing_prompt)
+# if len(global_edit) > 0:
+#     for obj in [global_edit]:
+#         editing_prompt, dataset = generate_editing_prompt(dataset,obj)
+#         blended_word_list.append("")
+#         editing_prompts.append(editing_prompt)
 
-results = inference(img_file, source_prompt, editing_prompts,
-          blended_word_list, mutual,
-          positive_prompt, negative_prompt,
-          guidance_s, guidance_t,
-          num_inference_steps, 
-          width, height, seed, strength,          
-          cross_replace_steps, self_replace_steps, 
-          thresh_e, thresh_m, denoise,list(range(rigid_num,len(editing_prompts))))
+# results = inference(img_file, source_prompt, editing_prompts,
+#           blended_word_list, mutual,
+#           positive_prompt, negative_prompt,
+#           guidance_s, guidance_t,
+#           num_inference_steps, 
+#           width, height, seed, strength,          
+#           cross_replace_steps, self_replace_steps, 
+#           thresh_e, thresh_m, denoise,list(range(rigid_num,len(editing_prompts))))
 
-img_out = results[0]['target_image'][-1]
+# img_out = results[0]['target_image'][-1]
 
-# Save to disk
-img_out.save("./ParallelEdits/output.jpg") 
+# # Save to disk
+# img_out.save("./ParallelEdits/output.jpg") 
