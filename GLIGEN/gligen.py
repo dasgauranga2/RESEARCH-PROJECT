@@ -8,13 +8,12 @@ import json
 import random
 import bbdraw
 import matplotlib.pyplot as plt
+from ultralytics import YOLO
 
 #os.environ["TORCH_CUDA_ARCH_LIST"] = "8.9"
 
-# load image processor
-processor = AutoImageProcessor.from_pretrained("facebook/deformable-detr-detic")
-# load object detection model
-model = DeformableDetrForObjectDetection.from_pretrained("facebook/deformable-detr-detic").to("cuda")
+# If you're using a model pretrained on Open Images (or whatever you prefer), replace the path.
+model = YOLO("GLIGEN/yolov8n-oiv7.pt")  # e.g., replace with yolov8n-oiv7.pt if you have that pretrained
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
@@ -24,8 +23,8 @@ with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
 orig_images = []
 # list to store images with bounding boxes
 bb_images = []
-# path to your font file
-font_path = "GLIGEN/roboto.ttf"
+# # path to your font file
+# font_path = "GLIGEN/roboto.ttf"
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
@@ -33,15 +32,8 @@ for sample in random.sample(data, 6):
     # load the image
     image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
 
-    # preprocess the input image
-    inputs = processor(images=image, return_tensors="pt").to("cuda")
     # run inference
-    outputs = model(**inputs)
-
-    # get original image height and width
-    target_sizes = torch.tensor([image.size[::-1]])
-    # get results
-    results = processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=0.5)[0]
+    results = model.predict(source=image, imgsz=640)[0]
 
     # list of bounding boxes
     boxes = []
@@ -49,13 +41,13 @@ for sample in random.sample(data, 6):
     labels = []
 
     # iterate through each detected result
-    for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+    for box, class_idx, score in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
 
         # get coordinates of bounding box
         x1, y1, x2, y2 = box.tolist()
 
         # object category
-        class_name = model.config.id2label[label.item()]
+        class_name = model.names[int(class_idx.item())]
 
         # confidence score
         conf = float(score.item())
