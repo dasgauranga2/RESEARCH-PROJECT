@@ -26,6 +26,19 @@ with open("GLIGEN/log.txt", "w") as f:
 # open the text file in append mode
 log_file = open("GLIGEN/log.txt", "a")
 
+# set to store the LVIS dataset classes
+lvis_classes = set()
+with open("GLIGEN/lvis_classes.txt", "r") as file:
+    for line in file:
+        line = line.strip()
+        if '/' in line:
+            for obj in line.split('/'):
+                lvis_classes.add(obj.strip())
+        else:
+            lvis_classes.add(line)
+
+# print(lvis_classes)
+
 # load the object detection model
 model = YOLO("GLIGEN/yolov8x-oiv7.pt")  # e.g., replace with yolov8n-oiv7.pt if you have that pretrained
 
@@ -84,7 +97,7 @@ def gligen_prompt(client, response_text):
 # function to suggest replacements for each object
 def replace(client, object_text):
     prompt = (
-        "Given an object name, propose few alternative objects that are visually similar but clearly different. "
+        "Given an object name, propose 10 alternative objects that are visually similar but clearly different. "
         "Select them ONLY from the LVIS dataset categories. "
         "Prioritize nouns with similar shape, size, and geometry so they can plausibly occupy the same bounding box. "
         "Avoid synonyms of the original object, brand names, or abstract concepts. "
@@ -129,7 +142,7 @@ ed_images = []
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
-for sample in random.sample(data, 8):
+for sample in random.sample(data, 4):
     # load the image
     image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
     # get the chosen response
@@ -144,7 +157,7 @@ for sample in random.sample(data, 8):
     # get width and height of image
     width, height = image.size
 
-    # run inference
+    # run object detection inference
     results = model.predict(source=image, imgsz=640)[0]
 
     # list of bounding box locations
@@ -165,9 +178,10 @@ for sample in random.sample(data, 8):
         # object category
         class_name = model.names[int(class_idx.item())].lower()
 
-        # if human is detected suggest a statue
-        if class_name in {"person", "man", "woman", "boy", "girl"}:
-            repl_obj = random.choice(["statue", "sculpture"])
+        # choose the object we want to replace with
+        if class_name in {"person", "man", "woman", "boy", "girl"}: # if human is detected skip
+            # repl_obj = random.choice(["statue", "sculpture"])
+            continue
         elif class_name == "clothing": # skip clothing
             continue
         elif class_name.startswith("human"): # skip human parts
@@ -178,6 +192,10 @@ for sample in random.sample(data, 8):
 
             # convert to list
             rep_suggs_list = rep_suggs.split(',')
+            rep_suggs_list = [obj for obj in rep_suggs_list if obj.strip().lower() in lvis_classes]
+
+            if len(rep_suggs_list)==0:
+                continue
 
             # randomly select one object
             repl_obj = random.choice(rep_suggs_list).strip().lower()
@@ -220,18 +238,20 @@ for sample in random.sample(data, 8):
             gligen_boxes=gligen_boxes,
             gligen_inpaint_image=image,            # edit your original image
             gligen_scheduled_sampling_beta=0.3,    # see note below
-            num_inference_steps=40,
-            guidance_scale=7.5,
+            num_inference_steps=50,
+            guidance_scale=8,
             output_type="pil"
         ).images[0]
         print(f"DETECTED OBJECTS: {class_names}")
         print(f"REPLACED OBJECTS: {class_repls}\n")
-
-        orig_images.append(image)
-        bb_images.append(bb_image)
-        ed_images.append(edited_image)
     else:
         print("NO OBJECTS DETECTED")
+        bb_image = image.copy()
+        edited_image = image.copy()
+    
+    orig_images.append(image)
+    bb_images.append(bb_image)
+    ed_images.append(edited_image)
 
 # figure for the original image and the custom images
 fig, axes = plt.subplots(len(orig_images), 3, figsize=(10, 12))
