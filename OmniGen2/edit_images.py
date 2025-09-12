@@ -77,7 +77,7 @@ def run(accelerator, pipeline, instruction, negative_prompt, input_image):
         input_images=[input_image],
         width=640, # output image width
         height=640, # output image height
-        num_inference_steps=30, # no. of inference steps
+        num_inference_steps=40, # no. of inference steps
         max_sequence_length=1024,
         text_guidance_scale=5.0, # controls how strictly the output adheres to the text prompt
         image_guidance_scale=2.0, # controls how much the final image should resemble the input reference image
@@ -209,8 +209,8 @@ if data_type == 'fp16':
 elif data_type == 'bf16':
     weight_dtype = torch.bfloat16
 
-# # load image editing pipeline
-# pipeline = load_pipeline(accelerator, weight_dtype)
+# load image editing pipeline
+pipeline = load_pipeline(accelerator, weight_dtype)
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
@@ -223,23 +223,23 @@ edited_images = []
 # list of prompts
 prompts = []
 
-# RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
-#start = time.time()
-# iterate through the data
-for sample in random.sample(data, 8):
-    # chosen response
-    chosen = sample['chosen']
-    # original image
-    image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
+# # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
+# #start = time.time()
+# # iterate through the data
+# for sample in random.sample(data, 8):
+#     # chosen response
+#     chosen = sample['chosen']
+#     # original image
+#     image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
 
-    # extract all the objects from the chosen response
-    replaced_text = extract_objects(openai_client, chosen)
-    #print(f"CHOSEN: {chosen}\n")
-    print(f"REPLACED TEXT: {replaced_text}")
+#     # extract all the objects from the chosen response
+#     replaced_text = extract_objects(openai_client, chosen)
+#     #print(f"CHOSEN: {chosen}\n")
+#     print(f"REPLACED TEXT: {replaced_text}")
 
-    # prompt for image editing model
-    prompt = build_omnigen_prompt(replaced_text)
-    print(f"PROMPT: {prompt}\n")
+#     # prompt for image editing model
+#     prompt = build_omnigen_prompt(replaced_text)
+#     print(f"PROMPT: {prompt}\n")
 
 #     # negative prompt text
 #     # tells the model what you don't want to see in the image
@@ -272,7 +272,35 @@ for sample in random.sample(data, 8):
 # plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
 # plt.close()
 
-# # end = time.time()
-# # print(f"TIME TAKEN: {(end-start):.2f} seconds")
+# USE THE ENTIRE DATASET
+# iterate through the data
+for sample in random.sample(data, 8):
+    # chosen response
+    chosen = sample['chosen']
+    # original image name
+    image_name = sample['img_path']
+    # original image
+    image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
 
-# log_file.close()
+    # extract all the objects from the chosen response
+    replaced_text = extract_objects(openai_client, chosen)
+    #print(f"CHOSEN: {chosen}\n")
+    #print(f"REPLACED TEXT: {replaced_text}")
+
+    # prompt for image editing model
+    prompt = build_omnigen_prompt(replaced_text)
+    #print(f"PROMPT: {prompt}\n")
+
+    # negative prompt text
+    # tells the model what you don't want to see in the image
+    negative_prompt = "(((deformed))), blurry, over saturation, bad anatomy, disfigured, poorly drawn face, mutation, mutated, (extra_limb), (ugly), (poorly drawn hands), fused fingers, messy drawing, broken legs censor, censored, censor_bar"
+
+    # edit the image
+    edited_image = run(accelerator, pipeline, prompt, negative_prompt, image)
+    edited_image_save_path = f'mDPO/data/rejected/' + image_name
+    edited_image.save(edited_image_save_path)
+
+# end = time.time()
+# print(f"TIME TAKEN: {(end-start):.2f} seconds")
+
+log_file.close()
