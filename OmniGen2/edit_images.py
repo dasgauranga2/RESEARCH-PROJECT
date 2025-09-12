@@ -29,6 +29,7 @@ with open("OmniGen2/log.txt", "w") as f:
 # open the text file in append mode
 log_file = open("OmniGen2/log.txt", "a")
 
+# function to load the image editing pipeline
 def load_pipeline(accelerator: Accelerator, weight_dtype: torch.dtype) -> OmniGen2Pipeline:
     pipeline = OmniGen2Pipeline.from_pretrained(
         MODEL_NAME,
@@ -88,48 +89,39 @@ def run(accelerator, pipeline, instruction, negative_prompt, input_image):
     )
     return result.images[0]
 
-# function to rewrite the response text
-def rewrite(client, response_text):
-    prompt = (
-        "Rewrite the response text by replacing every object with an object that is visually similar but different, while keeping the sentence structure and overall tone similar.\n"
-        f"Response Text: {response_text}"
-    )
-    response = None
-    while response is None:
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini-2024-07-18",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,
-            )
+# function to extract all objects from the response text
+def extract_objects(client, response_text):
+    # prompt = (
+    #     "Rewrite the response text by replacing every object with an object that is visually similar but different, while keeping the sentence structure and overall tone similar.\n"
+    #     f"Response Text: {response_text}"
+    # )
+    # prompt = (
+    #     "Rewrite the text by replacing each VISUAL OBJECT CATEGORY with a visually similar but different category, "
+    #     "while keeping everything else (structure, tone, relations, counts, adjectives like color/size, locations) the same.\n"
+    #     "Rules:\n"
+    #     "1) Replace only the object CATEGORY (the noun head). Do not change verbs, prepositions, numbers, or non-visual nouns.\n"
+    #     "2) Preserve modifiers (color, size, pose, count) unless the modifier is part of the category name being changed.\n"
+    #     "3) If the object is a lexicalized multi-word name (e.g., 'traffic light', 'fire hydrant', 'hot dog', 'baseball bat') or a species term (e.g., 'polar bear'),\n"
+    #     "   treat the whole term as the category and replace it with a similar category of the same type.\n"
+    #     "4) Do not add or remove objects; keep a 1:1 correspondence with the originals.\n"
+    #     "5) Keep the same number of sentences and punctuation. Output only the rewritten text.\n"
+    #     f"Text: {response_text}"
+    # )
+    prompt = f"""
+        Task: From the text, extract UNIQUE VISUAL NOUN HEADS (physical object categories) and propose a visually similar but different replacement for each.
 
-            return response.choices[0].message.content
-        except RateLimitError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
-            time.sleep(60)
-            continue
-        except InternalServerError as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
-            time.sleep(600)
-            continue
-        except Exception as error:
-            log_file.write(f"{str(error)}\n")
-            log_file.flush()
-            raise
+        STRICT RULES
+        1) Output exactly TWO lines and nothing else.
+        2) Line 1 = comma-separated list of unique visual noun heads (lowercase, singular), in order of first mention, max 8 items.
+        3) Line 2 = comma-separated replacements, 1:1 aligned with Line 1, same object type (animal↔animal, vehicle↔vehicle, furniture↔furniture), not identical or hypernym/synonym.
+        4) Inclusion test (ALL must be true): the item is a concrete, countable, physical object with clear boundaries that can appear in a single photograph (e.g., animal, person, plant, food, tool, appliance, furniture, clothing, vehicle, electronic device, instrument).
+        5) Exclude NON-VISUAL categories such as: activities/events/fields (“game”, “campaign”, “hobby”, “sport”, “education”), organizations/services/apps/websites, abstract concepts (“strategy”, “policy”, “idea”), collectives/containers (“group”, “population”, “bunch”, “set”, “pair”), places/scenes (“park”, “street”, “kitchen”), materials/fluids (“water”, “sand”, “air”), weather/time words (“rain”, “morning”), and attributes or actions.
+        6) For “X of Y” or collectives (e.g., “bunches of bananas”, “population of polar bears”), KEEP ONLY Y → “banana”, “bear”.
+        7) Keep lexicalized multi-word object names as one head if standard (e.g., “traffic light”, “fire hydrant”, “baseball bat”, “cell phone”).
 
-# function to extract the objects that were replaced
-def replace(client, chosen, rewritten):
-    prompt = (
-        "Given the original text extract the objects that were changed in the rewritten text.\n"
-        "First, write only the objects from the original text separated by comma.\n"
-        "Then, in the next line write the corresponding objects in the rewritten text in the same order separated by comma.\n"
-        f"Original Text: {chosen}\n"
-        f"Rewritten Text: {rewritten}"
-    )
+        Text:
+        {response_text}
+    """
     response = None
     while response is None:
         try:
@@ -198,11 +190,11 @@ def build_omnigen_prompt(text) -> str:
 
         return result
     except Exception as error:
-        #log_file.write(f"{str(error)}\n")
-        #log_file.flush()
+        log_file.write(f"PROBLEM WITH REPLACED TEXT: {text}\n")
+        log_file.write(f"{str(error)}\n")
+        log_file.flush()
         print(f"REPLACED TEXT: {text}")
         raise
-
 
 # available data types: 'fp32', 'fp16', 'bf16'
 data_type = 'bf16'
@@ -232,40 +224,23 @@ edited_images = []
 prompts = []
 
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
-
-start = time.time()
+#start = time.time()
 # iterate through the data
-for sample in random.sample(data, 4):
+for sample in random.sample(data, 8):
+    # chosen response
     chosen = sample['chosen']
+    # original image
     image = Image.open('mDPO/data/merged_images/' + sample['img_path']).convert("RGB")
 
-    # rewrite the chosen response by replacing each object
-    rewritten_text = rewrite(openai_client, chosen)
-    # extract the objects that were replaced
-    replaced_text = replace(openai_client, chosen, rewritten_text)
+    # extract all the objects from the chosen response
+    replaced_text = extract_objects(openai_client, chosen)
+    #print(f"CHOSEN: {chosen}\n")
+    print(f"REPLACED TEXT: {replaced_text}")
 
     # prompt for image editing model
     prompt = build_omnigen_prompt(replaced_text)
-    print(prompt)
-    print('\n')
-    # print(f"CHOSEN: {chosen}\n")
-    # print(f"REPLACED: {replaced_text}\n\n")
-    
+    print(f"PROMPT: {prompt}\n")
 
-
-
-#     if '__' not in replaced_text:
-#         print(f"INVALID REPLACED TEXT: {replaced_text}")
-#         continue
-
-#     objects = replaced_text.split('__')
-#     # object to be replaced
-#     obj1 = objects[0].strip()
-#     # object that we will replace with
-#     obj2 = objects[1].strip()
-
-#     # prompt text
-#     prompt = f'Replace the {obj1} with {obj2}.'
 #     # negative prompt text
 #     # tells the model what you don't want to see in the image
 #     negative_prompt = "(((deformed))), blurry, over saturation, bad anatomy, disfigured, poorly drawn face, mutation, mutated, (extra_limb), (ugly), (poorly drawn hands), fused fingers, messy drawing, broken legs censor, censored, censor_bar"
@@ -285,7 +260,7 @@ for sample in random.sample(data, 4):
 
 #     # plot the original image
 #     axes[(i*2)].imshow(images[i])
-#     axes[(i*2)].set_title(prompts[i])
+#     axes[(i*2)].set_title("Original Image")
 #     axes[(i*2)].axis('off')
 
 #     # plot the chosen image
@@ -297,7 +272,7 @@ for sample in random.sample(data, 4):
 # plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
 # plt.close()
 
-# end = time.time()
-# print(f"TIME TAKEN: {(end-start):.2f} seconds")
+# # end = time.time()
+# # print(f"TIME TAKEN: {(end-start):.2f} seconds")
 
-log_file.close()
+# log_file.close()
