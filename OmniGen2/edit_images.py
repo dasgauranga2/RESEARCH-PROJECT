@@ -193,8 +193,9 @@ def build_omnigen_prompt(text) -> str:
         log_file.write(f"PROBLEM WITH REPLACED TEXT: {text}\n")
         log_file.write(f"{str(error)}\n")
         log_file.flush()
-        print(f"REPLACED TEXT: {text}")
-        raise
+        return "Remove all foreground objects and fill in the background."
+        #print(f"REPLACED TEXT: {text}")
+        #raise
 
 # available data types: 'fp32', 'fp16', 'bf16'
 data_type = 'bf16'
@@ -274,7 +275,7 @@ prompts = []
 
 # USE THE ENTIRE DATASET
 # iterate through the data
-for sample in random.sample(data, 8):
+for sample in data:
     # chosen response
     chosen = sample['chosen']
     # original image name
