@@ -609,27 +609,37 @@ def get_edits_type(ac, obj_pairs, global_edit):
 
 # data point to do image editing
 dataset = {
+    # path of image to be edited
     "image_path": "ParallelEdits/imgs/example.jpg",
     # list of prompts from source to target with intermediate prompts
+    # when going from one prompt to next make only one change
     "editing_prompts": [
-        "a man sitting in a boat is silhouetted against the sunset with mountain in the background",                # P0 (source)
-        "a man standing in a boat is silhouetted against the sunset with mountain in the background",               # P1
-        "a man standing in a boat is silhouetted against the sunset and ducks on the water with mountain in the background",  # P2
-        "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background" # P3 (final)
+        "a man sitting in a boat is silhouetted against the sunset with mountain in the background", # P0
+        "a man standing in a boat is silhouetted against the sunset with mountain in the background", # P1
+        "a man standing in a boat is silhouetted against the sunset and ducks on the water with mountain in the background", # P2
+        "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background" # P3
     ]
 }
 
 # parameters for inference
+# image path
 img = dataset['image_path']
+# caption describing the image to be edited
 source_prompt = dataset['editing_prompts'][0]
-target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
-local = ["",""]
+#target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
+#local = ["",""]
+# keep as empty string
 mutual = ""
+# keep as empty string
 positive_prompt = ""
+# keep as empty string
 negative_prompt = ""
+# CFG scale for the source prompt
+# it controls how much the prompts should be followed
 guidance_s = 1
+# change this value only if image editing quality is not good enough
 guidance_t = [3]
-test_num_inference_step = 5
+#test_num_inference_step = 5
 num_inference_steps = 15
 width = 512
 height = 512
@@ -644,19 +654,22 @@ denoise = False
 # open the image file
 img_file = Image.open(img).resize((width, height))
 
-# branches (P1..P3)
+# editing branches (P1..P3)
 editing_prompts = dataset["editing_prompts"][1:] 
 
-# IMPORTANT: indices of non-rigid branches (P0→P1 and P1→P2)
-shape_change = [0, 1]
-
-# blended tokens per branch (aligns with P0→P1, P1→P2, P2→P3)
+# blended tokens for each branch (aligns with P0→P1, P1→P2, P2→P3)
+# for each branch this tells which words/tokens to pay attention to
+# these are the words/tokens which are new/modified from the previous
 blended_word_list = [
     "man standing",
     "ducks on the water",
     "Alps mountain"
 ]
 
+# indices of editing branches that are non-rigid (P0→P1 and P1→P2)
+shape_change = [0, 1]
+
+# run the image editing
 results = inference(img_file, source_prompt, editing_prompts,
           blended_word_list, mutual,
           positive_prompt, negative_prompt,
@@ -666,73 +679,5 @@ results = inference(img_file, source_prompt, editing_prompts,
           cross_replace_steps, self_replace_steps, 
           thresh_e, thresh_m, denoise, shape_change)
 
+# save the image
 results[0]['target_image'][-1].save('ParallelEdits/output.jpg')
-
-
-
-
-
-
-# dataset = {
-#     "image_path": "ParallelEdits/imgs/example.jpg",
-#     "source_prompt": "a man sitting in a boat is silhouetted against the sunset with mountain in the background",
-#     "target_prompt": "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background",
-#     "editing":{"man standing":{"position":2,"edit_type":5,"action":"man sitting"}, "ducks on the water":{"position":11,"edit_type":2,"action":"+"},"Alps mountain":{"position":12,"edit_type":1,"action":"mountain"}},
-#     "obj-adj-pair":{"man":["standing"],"ducks":[],"mountain":["Alps"]}}
-    
-# img, source_prompt, target_prompt, \
-#           local, mutual, \
-#           positive_prompt, negative_prompt, \
-#           guidance_s, guidance_t, \
-#           test_num_inference_steps,num_inference_steps, \
-#           width, height, seed, strength,           \
-#           cross_replace_steps, self_replace_steps,  \
-#           thresh_e, thresh_m, denoise = dataset['image_path'], \
-#             dataset['source_prompt'], [dataset['source_prompt'], dataset['target_prompt'].replace("[", "").replace("]", "")], ["",""],  \
-#             "","","",1,[3],5, 15,512,512,0,1,0.7,0.7,0.5,0.8,False
-
-# img_file = Image.open(img).resize((width, height))
-# ### for aspect clustering
-# aspect_cluters = inference(img_file, source_prompt, target_prompt,
-#           local, mutual,
-#           positive_prompt, negative_prompt,
-#           guidance_s, guidance_t,
-#           test_num_inference_steps, #num_inference_steps,
-#           width, height, seed, strength,          
-#           cross_replace_steps, self_replace_steps, 
-#           thresh_e, thresh_m, denoise,[1])
-
-# obj_pairs, global_edit = get_obj_pair(dataset)
-# non_rigid_obj, rigid_obj, global_edit = get_edits_type(aspect_cluters, obj_pairs, global_edit)
-# rigid_objs = aspect_clustering(aspect_cluters, rigid_obj)
-# non_rigid_objs = aspect_clustering(aspect_cluters, non_rigid_obj)
-
-# editing_prompts = []
-# blended_word_list = []
-# for obj in rigid_objs:
-#     editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-#     blended_word_list.append(" ".join(obj))
-#     editing_prompts.append(editing_prompt)
-# rigid_num = len(editing_prompts)
-
-# for obj in non_rigid_objs:
-#     editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-#     blended_word_list.append(" ".join(obj))
-#     editing_prompts.append(editing_prompt)
-
-# if len(global_edit) > 0:
-#     for obj in [global_edit]:
-#         editing_prompt, dataset = generate_editing_prompt(dataset,obj)
-#         blended_word_list.append("")
-#         editing_prompts.append(editing_prompt)
-
-# results = inference(img_file, source_prompt, editing_prompts,
-#           blended_word_list, mutual,
-#           positive_prompt, negative_prompt,
-#           guidance_s, guidance_t,
-#           num_inference_steps, 
-#           width, height, seed, strength,          
-#           cross_replace_steps, self_replace_steps, 
-#           thresh_e, thresh_m, denoise,list(range(rigid_num,len(editing_prompts))))
-
-# results[0]['target_image'][-1]
