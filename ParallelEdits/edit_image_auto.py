@@ -665,13 +665,10 @@ def summarize(client, response_text):
             log_file.flush()
             raise
         
-
-        
-# function to extract all objects from a response
-def extract_objects(client, response_text):
+# function to extract all objects from a paragraph
+def extract_objects(client, paragraph_text):
     prompt = f"""
         You will be given an input paragraph describing an image.
-
         Extract ALL unique visual object noun heads: discrete, countable physical objects visible in the scene.
         A valid object must satisfy ALL:
         - Concrete & countable (can be pointed to, could have a bounding box).
@@ -689,13 +686,69 @@ def extract_objects(client, response_text):
         If uncertain, exclude it.
         - Output ONLY the comma-separated list in the order they first appear. No extra words.
 
-        Input Paragraph: {response_text}
+        Input Paragraph: {paragraph_text}
     """
     response = None
     while response is None:
         try:
             response = client.chat.completions.create(
                 model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+            )
+
+            return response.choices[0].message.content
+        except RateLimitError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(60)
+            continue
+        except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
+        except Exception as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            raise
+
+# function to generate inputs for ParallelEdits
+def gen_pe_input(client, paragraph_text, word_list):
+    prompt = f"""
+        You will be given an input paragraph P_0 and a word list of length n (comma-separated).
+        Generate a sequence P_1, P_2, …, P_n.
+
+        STRICT RULES
+        1) Sequential chain: P_i must be derived from P_(i-1).
+        2) Line i edits ONLY the i-th word from the list (match by lemma; replace all its occurrences in P_(i-1)).
+        3) Replacement must be a DIFFERENT object category that is VISUALLY SIMILAR and in the SAME broad supercategory
+        (e.g., animal↔animal: cat→rabbit; vehicle↔vehicle: bus→train; container↔container: bowl→cup).
+        4) No synonyms, spelling variants, or hypernyms/hyponyms (airplane→aeroplane, ball→sphere, building→structure = FORBIDDEN).
+        5) Exactly ONE contiguous text change per line. Keep ALL other text identical to P_(i-1) except minimal agreement (a/an, plural).
+        6) Do NOT change attributes, colors, materials, counts, locations/scenes, or any other objects.
+        7) Output EXACTLY n lines. Each line format:
+        <P_i>__<target phrase>
+        - The <target phrase> must appear VERBATIM in <P_i>.
+        8) Output ONLY the n lines. No preamble or commentary.
+
+        Example
+        Input Paragraph (P_0): There is an orange cat playing. The cat is chased by a dog.
+        Word List: cat, dog
+        Output:
+        There is an orange rabbit playing. The rabbit is chased by a dog.__rabbit
+        There is an orange rabbit playing. The rabbit is chased by a wolf.__wolf
+
+        Input Paragraph (P_0): {paragraph_text}
+        Word List: {word_list}
+    """
+    response = None
+    while response is None:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4.1-mini-2025-04-14",
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
@@ -734,10 +787,13 @@ for sample in random.sample(data, 6):
     chosen_response_summarized = summarize(openai_client, chosen)
     # extract all objects in the caption
     all_objects = extract_objects(openai_client, chosen_response_summarized)
+    # generate inputs for ParallelEdits
+    pe_inputs = gen_pe_input(openai_client, chosen_response_summarized, all_objects)
     
     #print(f'CHOSEN: {chosen}')
     print(f'SUMMARIZED: {chosen_response_summarized}')
-    print(f'ALL OBJECTS: {all_objects}\n\n')
+    print(f'ALL OBJECTS: {all_objects}')
+    print(f'PARALLEL EDITS INPUTS: {pe_inputs}\n\n')
 
 log_file.close()
 
