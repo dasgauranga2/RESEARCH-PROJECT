@@ -19,6 +19,7 @@ from openai import OpenAI, RateLimitError, InternalServerError
 import time
 import json
 import random
+import matplotlib.pyplot as plt
 
 # set device
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -369,7 +370,8 @@ def inference(img, source_prompt, target_prompt,
                     ) for i in range(len(local))]
     callbacks = None
     callbacks = [c.step_callback for c in controller]
-    ptp_utils.register_attention_control_all(pipe, controller, self_attn_list=[1,0])
+    #ptp_utils.register_attention_control_all(pipe, controller, self_attn_list=[1,0])
+    ptp_utils.register_attention_control_all(pipe, controller, self_attn_list=self_attn_list)
 
     results = pipe(prompt=target_prompt,
                    source_prompt=source_prompt,
@@ -384,9 +386,16 @@ def inference(img, source_prompt, target_prompt,
                    denoise_model=denoise,
                    callback = callbacks
                    )
-    att1=show_cross_attention(controller[0], 16, ["up", "down"],prompts=[target_prompt[0]])
-    att2=show_cross_attention(controller[1], 16, ["up", "down"],prompts=[target_prompt[1]])
-    return results,att1, att2
+    # att1=show_cross_attention(controller[0], 16, ["up", "down"],prompts=[target_prompt[0]])
+    # att2=show_cross_attention(controller[1], 16, ["up", "down"],prompts=[target_prompt[1]])
+    # return results,att1, att2
+
+    attns = []
+    for i in range(len(controller)):
+        attns.append(
+            show_cross_attention(controller[i], 16, ["up", "down"], prompts=[target_prompt[i]])
+        )
+    return results, attns
 
 
 def aggregate_attention(attention_store: AttentionStore, res: int, from_where: List[str], is_cross: bool, select: int, prompts: list):
@@ -675,8 +684,8 @@ def extract_objects(client, paragraph_text):
         - NOT an attribute/material/quality (red, metallic, color, hue, tone, appearance).
         - NOT a phenomenon/substance (light, reflection, shadow, water, waves, smoke, fog).
         - NOT a location/scene/terrain or venue/institution (street, field, land, runway, slope, sky/skies, desert, zoo, museum, building/buildings).
-        - NOT a **part/component of another object** (controls, steering wheel, dashboard, handlebars, pedals, buttons, dials, hinges).
-        - NOT **ground-cover/bulk plant material** (grass, lawn, turf, foliage, leaves).
+        - NOT a part/component of another object (controls, steering wheel, dashboard, handlebars, pedals, buttons, dials, hinges).
+        - NOT ground-cover/bulk plant material (grass, lawn, turf, foliage, leaves).
         - NOT a vague collective/commodity (flock, livestock, supplies, gear, objects) unless it clearly names a specific object class (people→person is allowed).
 
         Additionally:
@@ -684,9 +693,18 @@ def extract_objects(client, paragraph_text):
         [person, animal, vehicle, furniture, container, appliance, tool,
         instrument, electronic_display, sports_gear, bag, sign, food, plant, dishware]
         If uncertain, exclude it.
-        - Output ONLY the comma-separated list in the order they first appear. No extra words.
+        - Return **lowercase singular lemmas**, deduplicated, in the order they first appear.
 
-        Input Paragraph: {paragraph_text}
+        Cardinality:
+        - Output **between 1 and 6 items**.
+        - If you find **more than 6** valid objects, output the **6 most salient** (main subjects first, then foreground interactors), preserving order of first appearance.
+        - If strict filtering yields **0 items**, output **exactly 1** fallback: the **single most salient noun** that fits any allowed supercategory above (prefer in this order:
+        person > animal > vehicle > furniture > tool > container > dishware > appliance > bag > sign > plant).
+
+        Output ONLY the comma-separated list (no extra words).
+
+        Input Paragraph:
+        {paragraph_text}
     """
     response = None
     while response is None:
@@ -771,29 +789,121 @@ def gen_pe_input(client, paragraph_text, word_list):
             log_file.flush()
             raise
 
+# function to create the create the editing prompts and blended word list
+def build_paralleledits_args(gpt_text):
+    lines = gpt_text.split('\n')
+
+    # list of editing prompts
+    editing_prompts = []
+    # list of blended words
+    blended_words = []
+
+    for line in lines:
+        splits = line.split('__')
+        editing_prompts.append(splits[0])
+        blended_words.append(splits[1])
+    
+    return editing_prompts, blended_words
+
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
+# list of original images
+orig_images = []
+# list of edited images
+edited_images = []
+
 # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # iterate through the data
-for sample in random.sample(data, 6):
+for sample in random.sample(data, 4):
     # chosen response
     chosen = sample['chosen']
-    # image path
-    image_path = 'mDPO/data/merged_images/' + sample['img_path']
+    # image name
+    image_name = sample['img_path']
 
     # summarize the chosen response to get image caption
     chosen_response_summarized = summarize(openai_client, chosen)
     # extract all objects in the caption
     all_objects = extract_objects(openai_client, chosen_response_summarized)
-    # generate inputs for ParallelEdits
+    # generate editing prompts and blended word list inputs for ParallelEdits using GPT
     pe_inputs = gen_pe_input(openai_client, chosen_response_summarized, all_objects)
+    # create the editing prompts and blended word list
+    editing_prompts, blended_word_list = build_paralleledits_args(pe_inputs)
     
     #print(f'CHOSEN: {chosen}')
     print(f'SUMMARIZED: {chosen_response_summarized}')
     print(f'ALL OBJECTS: {all_objects}')
     print(f'PARALLEL EDITS INPUTS: {pe_inputs}\n\n')
+
+    # # parameters for inference
+    # # image path
+    # img = dataset['image_path']
+    # caption describing the image to be edited
+    source_prompt = chosen_response_summarized
+    #target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
+    #local = ["",""]
+    # keep as empty string
+    mutual = ""
+    # keep as empty string
+    positive_prompt = ""
+    # keep as empty string
+    negative_prompt = ""
+    # CFG scale for the source prompt
+    # it controls how much the prompts should be followed
+    guidance_s = 1
+    # change this value only if image editing quality is not good enough
+    guidance_t = [3]
+    #test_num_inference_step = 5
+    num_inference_steps = 15
+    width = 512
+    height = 512
+    seed = 0
+    strength = 1
+    cross_replace_steps = 0.7
+    self_replace_steps = 0.7
+    thresh_e = 0.5
+    thresh_m = 0.8
+    denoise = False
+
+    # open the image file
+    img_file = Image.open('mDPO/data/merged_images/' + image_name).resize((width, height))
+
+    # edited image
+    edited_image = inference(img_file, source_prompt, editing_prompts,
+            blended_word_list, mutual,
+            positive_prompt, negative_prompt,
+            guidance_s, guidance_t,
+            num_inference_steps, 
+            width, height, seed, strength,          
+            cross_replace_steps, self_replace_steps, 
+            thresh_e, thresh_m, denoise, [])[0]['target_image'][-1]
+    
+    orig_images.append(img_file)
+    edited_images.append(edited_image)
+
+# figure for the original image and the custom images
+fig, axes = plt.subplots(len(orig_images), 2, figsize=(10, 12))
+axes = axes.flatten()
+
+start = time.time()
+for i in range(len(orig_images)):
+    # plot the original image
+    axes[(i*2)].imshow(orig_images[i])
+    axes[(i*2)].set_title("Original Image")
+    axes[(i*2)].axis('off')
+
+    # plot the chosen image
+    axes[(i*2)+1].imshow(edited_images[i])
+    axes[(i*2)+1].set_title("Edited Image")
+    axes[(i*2)+1].axis('off')
+
+end = time.time()
+print(f"TIME TAKEN: {(end-start):.2f} seconds")
+
+# save the images
+plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
+plt.close()
 
 log_file.close()
 
