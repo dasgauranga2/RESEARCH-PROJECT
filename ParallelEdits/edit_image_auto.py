@@ -664,49 +664,32 @@ def summarize(client, response_text):
             log_file.write(f"{str(error)}\n")
             log_file.flush()
             raise
+        
 
-# function to generate editing prompts and blended word list
-def gen_paredit_inputs(client, response_text):
-    # prompt = f'''
-    #     You will be given a short paragraph which is P_0 and you have to generate a series of paragraphs P_1,P_2,...P_n.
-    #     P_i is generated from P_i-1 by replacing one visual noun head (physical object category) with another visually similar but different object category.
-    #     If the original paragraph P_0 has n unique visual noun heads you have to generate n paragraphs P_1,P_2,...P_n.
-    #     From the original paragraph, each unique visual noun head must be replaced exactly once.
-    #     In each newline write the generated paragraph and the new noun phrase that was replaced with separated by '__'.
-    #     Example Input Paragraph: There is an orange cat playing. The cat is chased by a dog.
-    #     Example Output: There is an orange rabbit playing. The rabbit is chased by a dog.__cat\n
-    #                     There is an orange rabbit playing. The rabbit is chased by a wolf.__wolf\n\n
-    #     Input Paragraph: {response_text}
-    # '''
+        
+# function to extract all objects from a response
+def extract_objects(client, response_text):
     prompt = f"""
-    You will be given a short paragraph P_0. Generate a series of paragraphs P_1, P_2, …, P_n.
+        You will be given an input paragraph describing an image.
 
-    Rules
-    1) Identify ALL unique **visual object noun heads** in P_0 (discrete, physical objects visible in the scene).
-    - EXCLUDE attributes/colors/materials (“red”, “crimson”, “texture”), abstract nouns (“traffic”, “environment”),
-        actions/verbs, and global scene/location terms (“street”, “field”, “city”).
-    2) Let n be the number of such unique object nouns. Produce EXACTLY n paragraphs: P_1…P_n.
-    3) Each P_i is made from previous paragraph P_(i-1) (not the original paragraph P_0) by replacing exactly ONE object noun (or its full noun phrase) with a **different but visually similar** object category.
-    - “Visually similar” = plausibly confusable or close in shape/function (e.g., car→van, bus; truck→bus; bicycle→motorcycle; cat→dog; horse→zebra/camel/donkey; bench→chair).
-    - DO NOT use synonyms/hypernyms/hyponyms that keep the category the same (movie→film, tracks→rails, building→structure).
-    - DO NOT add/remove objects, change counts, or alter global scene/background/time-of-day.
-    - Keep grammar and number agreement (singular/plural) consistent.
-    - Keep all other content unchanged except minimal edits needed for grammatical agreement.
-    4) Output FORMAT: one line per P_i as:
-    <edited paragraph>__<TARGET noun phrase you inserted in P_i>
-    - The target phrase after “__” MUST appear verbatim in P_i.
-    - Replace each unique object noun from P_0 exactly once across the n lines.
-    5) Keep each paragraph concise and faithful to P_0.
+        Extract ALL unique visual object noun heads: discrete, countable physical objects visible in the scene.
+        A valid object must satisfy ALL:
+        - Concrete & countable (can be pointed to, could have a bounding box).
+        - NOT an attribute/material/quality (red, metallic, color, hue, tone, appearance).
+        - NOT a phenomenon/substance (light, reflection, shadow, water, waves, smoke, fog).
+        - NOT a location/scene/terrain or venue/institution (street, field, land, runway, slope, sky/skies, desert, zoo, museum, building/buildings).
+        - NOT a **part/component of another object** (controls, steering wheel, dashboard, handlebars, pedals, buttons, dials, hinges).
+        - NOT **ground-cover/bulk plant material** (grass, lawn, turf, foliage, leaves).
+        - NOT a vague collective/commodity (flock, livestock, supplies, gear, objects) unless it clearly names a specific object class (people→person is allowed).
 
-    Example Input Paragraph:
-    There is an orange cat playing. The cat is chased by a dog.
+        Additionally:
+        - Only include objects that can belong to one of these supercategories:
+        [person, animal, vehicle, furniture, container, appliance, tool,
+        instrument, electronic_display, sports_gear, bag, sign, food, plant, dishware]
+        If uncertain, exclude it.
+        - Output ONLY the comma-separated list in the order they first appear. No extra words.
 
-    Example Output:
-    There is an orange rabbit playing. The rabbit is chased by a dog.__rabbit
-    There is an orange rabbit playing. The rabbit is chased by a wolf.__wolf
-
-    Input Paragraph:
-    {response_text}
+        Input Paragraph: {response_text}
     """
     response = None
     while response is None:
@@ -747,14 +730,14 @@ for sample in random.sample(data, 6):
     # image path
     image_path = 'mDPO/data/merged_images/' + sample['img_path']
 
-    # summarize the chosen response
+    # summarize the chosen response to get image caption
     chosen_response_summarized = summarize(openai_client, chosen)
-    # generate inputs for ParallelEdits
-    pe_inputs = gen_paredit_inputs(openai_client, chosen_response_summarized)
+    # extract all objects in the caption
+    all_objects = extract_objects(openai_client, chosen_response_summarized)
     
     #print(f'CHOSEN: {chosen}')
     print(f'SUMMARIZED: {chosen_response_summarized}')
-    print(f'PARALLEL EDIT INPUTS: {pe_inputs}\n\n')
+    print(f'ALL OBJECTS: {all_objects}\n\n')
 
 log_file.close()
 
