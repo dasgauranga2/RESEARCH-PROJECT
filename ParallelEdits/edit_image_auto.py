@@ -830,11 +830,26 @@ def build_paralleledits_args(gpt_text):
         raise
 
 # function to truncate prompt
-def truncate_prompt(txt):
-    ids = tokenizer(txt, add_special_tokens=True, truncation=True,
-                    max_length=MAX_NUM_WORDS)["input_ids"]
-    # Keep it as text for the pipeline (decode removes specials)
-    return tokenizer.decode(ids, skip_special_tokens=True)
+def truncate_prompt(txt, tok=tokenizer):
+    # 1) truncate CONTENT tokens only
+    ids = tok(txt, add_special_tokens=False)["input_ids"]
+    if len(ids) > MAX_NUM_WORDS-4:
+        ids = ids[:MAX_NUM_WORDS-4]
+
+    # 2) back to text
+    out = tok.decode(ids, skip_special_tokens=True).strip()
+
+    # 3) verify final length when specials are added; if too long, drop content tokens
+    for _ in range(4):  # a few tries is enough
+        n = len(tok(out, add_special_tokens=True)["input_ids"])
+        if n <= MAX_NUM_WORDS:
+            break
+        # drop one content token and try again
+        ids = tok(out, add_special_tokens=False)["input_ids"][:-1]
+        if not ids:
+            break
+        out = tok.decode(ids, skip_special_tokens=True).strip()
+    return out
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
