@@ -829,6 +829,13 @@ def build_paralleledits_args(gpt_text):
         log_file.flush()
         raise
 
+# function to truncate prompt
+def truncate_prompt(txt):
+    ids = tokenizer(txt, add_special_tokens=True, truncation=True,
+                    max_length=MAX_NUM_WORDS)["input_ids"]
+    # Keep it as text for the pipeline (decode removes specials)
+    return tokenizer.decode(ids, skip_special_tokens=True)
+
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
@@ -947,7 +954,8 @@ for sample in data:
     pe_inputs = gen_pe_input(openai_client, chosen_response_summarized, all_objects)
     # create the editing prompts and blended word list
     editing_prompts, blended_word_list = build_paralleledits_args(pe_inputs)
-    
+    editing_prompts = [truncate_prompt(ep) for ep in editing_prompts]
+
     #print(f'CHOSEN: {chosen}')
     print(f'SUMMARIZED: {chosen_response_summarized}')
     print(f'ALL OBJECTS: {all_objects}')
@@ -956,6 +964,7 @@ for sample in data:
     # parameters for inference
     # caption describing the image to be edited
     source_prompt = chosen_response_summarized
+    source_prompt = truncate_prompt(source_prompt)
     #target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
     #local = ["",""]
     # keep as empty string
