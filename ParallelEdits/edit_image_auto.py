@@ -31,7 +31,11 @@ pipe = EditPipeline.from_pretrained(model_id_or_path, scheduler=scheduler, requi
 tokenizer = pipe.tokenizer
 encoder = pipe.text_encoder
 LOW_RESOURCE = False
-MAX_NUM_WORDS = 77
+#MAX_NUM_WORDS = 77
+MAX_NUM_WORDS = pipe.tokenizer.model_max_length
+tokenizer.model_max_length = MAX_NUM_WORDS
+tokenizer.padding_side = "right"
+tokenizer.truncation_side = "right"
 if torch.cuda.is_available():
     pipe = pipe.to(device)
 class AttentionControl(abc.ABC):
@@ -312,7 +316,9 @@ class AttentionRefine(AttentionControlEdit):
         ms = ms.to(device)
         alpha_e = alpha_e.to(device)
         alpha_m = alpha_m.to(device)
-        t_len = len(tokenizer(prompts[1])["input_ids"])
+        #t_len = len(tokenizer(prompts[1])["input_ids"])
+        ids = tokenizer(prompts[1], add_special_tokens=True, truncation=True, max_length=MAX_NUM_WORDS)["input_ids"]
+        t_len = min(len(ids), MAX_NUM_WORDS)
         # import pdb; pdb.set_trace()
         self.prompts = prompts
         self.prompt_specifiers = prompt_specifiers
