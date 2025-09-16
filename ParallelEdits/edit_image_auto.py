@@ -15,7 +15,7 @@ from diffusers import UNet2DConditionModel, DiffusionPipeline, LCMScheduler
 import torch, cv2
 from PIL import Image
 import copy
-from openai import OpenAI, RateLimitError, InternalServerError
+from openai import OpenAI, RateLimitError, InternalServerError, APIConnectionError
 import time
 import json
 import random
@@ -637,10 +637,6 @@ log_file = open("ParallelEdits/log.txt", "a")
 
 # function to summarize a response text
 def summarize(client, response_text):
-    # prompt = (
-    #     "Using the response text, give a short summary of the image that is described by the text.\n\n"
-    #     f"Response Text: {response_text}"
-    # )
     prompt = (
         "Summarize only the visual content described in the response text in one paragraph in less than 60 words. "
         "Do not include any assumptions, causes, intentions, or speculative interpretations. "
@@ -665,6 +661,11 @@ def summarize(client, response_text):
             time.sleep(60)
             continue
         except InternalServerError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
+        except APIConnectionError as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
             time.sleep(600)
@@ -728,6 +729,11 @@ def extract_objects(client, paragraph_text):
             log_file.flush()
             time.sleep(600)
             continue
+        except APIConnectionError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
         except Exception as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
@@ -784,6 +790,11 @@ def gen_pe_input(client, paragraph_text, word_list):
             log_file.flush()
             time.sleep(600)
             continue
+        except APIConnectionError as error:
+            log_file.write(f"{str(error)}\n")
+            log_file.flush()
+            time.sleep(600)
+            continue
         except Exception as error:
             log_file.write(f"{str(error)}\n")
             log_file.flush()
@@ -791,19 +802,26 @@ def gen_pe_input(client, paragraph_text, word_list):
 
 # function to create the create the editing prompts and blended word list
 def build_paralleledits_args(gpt_text):
-    lines = gpt_text.split('\n')
+    try:
+        lines = gpt_text.split('\n')
+        lines = [line.strip() for line in lines if line]
 
-    # list of editing prompts
-    editing_prompts = []
-    # list of blended words
-    blended_words = []
+        # list of editing prompts
+        editing_prompts = []
+        # list of blended words
+        blended_words = []
 
-    for line in lines:
-        splits = line.split('__')
-        editing_prompts.append(splits[0])
-        blended_words.append(splits[1])
-    
-    return editing_prompts, blended_words
+        for line in lines:
+            splits = line.split('__')
+            editing_prompts.append(splits[0])
+            blended_words.append(splits[1])
+        
+        return editing_prompts, blended_words
+    except Exception as error:
+        log_file.write(f"INVALID GPT TEXT: {gpt_text}\n")
+        log_file.write(f"{str(error)}\n")
+        log_file.flush()
+        raise
 
 # open the training data json file
 with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
@@ -814,9 +832,102 @@ orig_images = []
 # list of edited images
 edited_images = []
 
-# RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
+# # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
+# # iterate through the data
+# for sample in random.sample(data, 8):
+#     # chosen response
+#     chosen = sample['chosen']
+#     # image name
+#     image_name = sample['img_path']
+
+#     # summarize the chosen response to get image caption
+#     chosen_response_summarized = summarize(openai_client, chosen)
+#     # extract all objects in the caption
+#     all_objects = extract_objects(openai_client, chosen_response_summarized)
+#     # generate editing prompts and blended word list inputs for ParallelEdits using GPT
+#     pe_inputs = gen_pe_input(openai_client, chosen_response_summarized, all_objects)
+#     # create the editing prompts and blended word list
+#     editing_prompts, blended_word_list = build_paralleledits_args(pe_inputs)
+    
+#     #print(f'CHOSEN: {chosen}')
+#     print(f'SUMMARIZED: {chosen_response_summarized}')
+#     print(f'ALL OBJECTS: {all_objects}')
+#     print(f'PARALLEL EDITS INPUTS: {pe_inputs}\n\n')
+
+#     # # parameters for inference
+#     # # image path
+#     # img = dataset['image_path']
+#     # caption describing the image to be edited
+#     source_prompt = chosen_response_summarized
+#     #target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
+#     #local = ["",""]
+#     # keep as empty string
+#     mutual = ""
+#     # keep as empty string
+#     positive_prompt = ""
+#     # keep as empty string
+#     negative_prompt = ""
+#     # CFG scale for the source prompt
+#     # it controls how much the prompts should be followed
+#     guidance_s = 1
+#     # change this value only if image editing quality is not good enough
+#     guidance_t = [3]
+#     #test_num_inference_step = 5
+#     num_inference_steps = 20
+#     width = 512
+#     height = 512
+#     seed = 0
+#     strength = 1
+#     cross_replace_steps = 0.7
+#     self_replace_steps = 0.7
+#     thresh_e = 0.5
+#     thresh_m = 0.8
+#     denoise = False
+
+#     # open the image file
+#     img_file = Image.open('mDPO/data/merged_images/' + image_name).resize((width, height))
+
+#     try:
+#         # edited image
+#         edited_image = inference(img_file, source_prompt, editing_prompts,
+#                 blended_word_list, mutual,
+#                 positive_prompt, negative_prompt,
+#                 guidance_s, guidance_t,
+#                 num_inference_steps, 
+#                 width, height, seed, strength,          
+#                 cross_replace_steps, self_replace_steps, 
+#                 thresh_e, thresh_m, denoise, [])[0]['target_image'][-1]
+#     except Exception as error:
+#         log_file.write(f"EDITING ERROR\n")
+#         log_file.write(f"{str(error)}\n")
+#         log_file.flush()
+#         raise
+    
+#     orig_images.append(img_file)
+#     edited_images.append(edited_image)
+
+# # figure for the original image and the custom images
+# fig, axes = plt.subplots(len(orig_images), 2, figsize=(10, len(orig_images)*3))
+# axes = axes.flatten()
+
+# for i in range(len(orig_images)):
+#     # plot the original image
+#     axes[(i*2)].imshow(orig_images[i])
+#     axes[(i*2)].set_title("Original Image")
+#     axes[(i*2)].axis('off')
+
+#     # plot the chosen image
+#     axes[(i*2)+1].imshow(edited_images[i])
+#     axes[(i*2)+1].set_title("Edited Image")
+#     axes[(i*2)+1].axis('off')
+
+# # save the images
+# plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
+# plt.close()
+
+# USE THE ENTIRE DATASET
 # iterate through the data
-for sample in random.sample(data, 4):
+for sample in data:
     # chosen response
     chosen = sample['chosen']
     # image name
@@ -836,9 +947,7 @@ for sample in random.sample(data, 4):
     print(f'ALL OBJECTS: {all_objects}')
     print(f'PARALLEL EDITS INPUTS: {pe_inputs}\n\n')
 
-    # # parameters for inference
-    # # image path
-    # img = dataset['image_path']
+    # parameters for inference
     # caption describing the image to be edited
     source_prompt = chosen_response_summarized
     #target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
@@ -869,116 +978,27 @@ for sample in random.sample(data, 4):
     # open the image file
     img_file = Image.open('mDPO/data/merged_images/' + image_name).resize((width, height))
 
-    # edited image
-    edited_image = inference(img_file, source_prompt, editing_prompts,
-            blended_word_list, mutual,
-            positive_prompt, negative_prompt,
-            guidance_s, guidance_t,
-            num_inference_steps, 
-            width, height, seed, strength,          
-            cross_replace_steps, self_replace_steps, 
-            thresh_e, thresh_m, denoise, [])[0]['target_image'][-1]
-    
-    orig_images.append(img_file)
-    edited_images.append(edited_image)
+    try:
+        # edited image
+        edited_image = inference(img_file, source_prompt, editing_prompts,
+                blended_word_list, mutual,
+                positive_prompt, negative_prompt,
+                guidance_s, guidance_t,
+                num_inference_steps, 
+                width, height, seed, strength,          
+                cross_replace_steps, self_replace_steps, 
+                thresh_e, thresh_m, denoise, [])[0]['target_image'][-1]
+        
+        # edited image save path
+        edited_save_path = f'mDPO/data/rejected/' + image_name
+        edited_image.save(edited_save_path)
+    except Exception as error:
+        log_file.write(f"EDITING ERROR\n")
+        log_file.write(f"{str(error)}\n")
+        log_file.flush()
+        raise
 
-# figure for the original image and the custom images
-fig, axes = plt.subplots(len(orig_images), 2, figsize=(10, 12))
-axes = axes.flatten()
-
-start = time.time()
-for i in range(len(orig_images)):
-    # plot the original image
-    axes[(i*2)].imshow(orig_images[i])
-    axes[(i*2)].set_title("Original Image")
-    axes[(i*2)].axis('off')
-
-    # plot the chosen image
-    axes[(i*2)+1].imshow(edited_images[i])
-    axes[(i*2)+1].set_title("Edited Image")
-    axes[(i*2)+1].axis('off')
-
-end = time.time()
-print(f"TIME TAKEN: {(end-start):.2f} seconds")
-
-# save the images
-plt.savefig(f'mDPO/results/ie_custom_images.png', bbox_inches='tight', pad_inches=0, dpi=300)
-plt.close()
+log_file.write(f"IMAGE EDITING COMPLETE\n")
+log_file.flush()
 
 log_file.close()
-
-
-# # data point to do image editing
-# dataset = {
-#     # path of image to be edited
-#     "image_path": "ParallelEdits/imgs/example.jpg",
-#     # list of prompts from source to target with intermediate prompts
-#     # when going from one prompt to next make only one change
-#     "editing_prompts": [
-#         "a man sitting in a boat is silhouetted against the sunset with mountain in the background", # P0
-#         "a man standing in a boat is silhouetted against the sunset with mountain in the background", # P1
-#         "a man standing in a boat is silhouetted against the sunset and ducks on the water with mountain in the background", # P2
-#         "a man standing in a boat is silhouetted against the sunset and ducks on the water with Alps mountain in the background" # P3
-#     ]
-# }
-
-# # parameters for inference
-# # image path
-# img = dataset['image_path']
-# # caption describing the image to be edited
-# source_prompt = dataset['editing_prompts'][0]
-# #target_prompt = [dataset['editing_prompts'][0], dataset['editing_prompts'][-1].replace("[", "").replace("]", "")]
-# #local = ["",""]
-# # keep as empty string
-# mutual = ""
-# # keep as empty string
-# positive_prompt = ""
-# # keep as empty string
-# negative_prompt = ""
-# # CFG scale for the source prompt
-# # it controls how much the prompts should be followed
-# guidance_s = 1
-# # change this value only if image editing quality is not good enough
-# guidance_t = [3]
-# #test_num_inference_step = 5
-# num_inference_steps = 15
-# width = 512
-# height = 512
-# seed = 0
-# strength = 1
-# cross_replace_steps = 0.7
-# self_replace_steps = 0.7
-# thresh_e = 0.5
-# thresh_m = 0.8
-# denoise = False
-
-# # open the image file
-# img_file = Image.open(img).resize((width, height))
-
-# # editing branches (P1..P3)
-# editing_prompts = dataset["editing_prompts"][1:] 
-
-# # blended tokens for each branch (aligns with P0→P1, P1→P2, P2→P3)
-# # for each branch this tells which words/tokens to pay attention to
-# # these are the words/tokens which are new/modified from the previous
-# blended_word_list = [
-#     "man standing",
-#     "ducks on the water",
-#     "Alps mountain"
-# ]
-
-# # indices of editing branches that are non-rigid (P0→P1 and P1→P2)
-# shape_change = [0, 1]
-
-# # run the image editing
-# results = inference(img_file, source_prompt, editing_prompts,
-#           blended_word_list, mutual,
-#           positive_prompt, negative_prompt,
-#           guidance_s, guidance_t,
-#           num_inference_steps, 
-#           width, height, seed, strength,          
-#           cross_replace_steps, self_replace_steps, 
-#           thresh_e, thresh_m, denoise, shape_change)
-
-# # save the image
-# results[0]['target_image'][-1].save('ParallelEdits/output.jpg')
