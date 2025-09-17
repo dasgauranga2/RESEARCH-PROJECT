@@ -6,6 +6,8 @@ import warnings
 from peft import PeftModel
 import json
 from tqdm import tqdm
+import os
+import glob
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -25,6 +27,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 # path of saved checkpoint
 checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
+#checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
@@ -48,14 +51,41 @@ tokenizer = AutoTokenizer.from_pretrained(
 with open('./BAT/bat_data.json', 'r') as file:
     data = json.load(file)
 
+# function to check for all variants of an image file name
+# if original image file name is test.jpg
+# it will search for test_1.jpg, test_2.jpg, ...
+def find_img_variants(img_name):
+    base = os.path.basename(img_name)
+    root, ext = os.path.splitext(base)
+    pattern = os.path.join('./BAT/eval_images/', f"{root}_*{ext}")
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        single = os.path.join('./BAT/eval_images/', base)
+        if os.path.exists(single):
+            paths = [single]
+    return paths
+
+# function to evaluate the model's response and give a score 0 or 1
+def score_response(response_text):
+    lower_text = response_text.strip().lower()
+
+    if 'yes' in lower_text:
+        return 1
+    else:
+        return 0
+
 correct = 0
 total = 0
 
 for sample in tqdm(data, desc='Evaluating responses'):
-    # image name
+#for sample in data[:4]:
+    # original image name
     image_name = sample['img_path']
     # most confident object in the image
     most_conf_obj = sample['most_conf_class']
+
+    # get paths of all variants of original image that was saved
+    all_image_paths = find_img_variants(image_name)
 
     # query
     query = f'Answer the question using only YES or NO. Is there a {most_conf_obj} in the image?'
@@ -63,25 +93,29 @@ for sample in tqdm(data, desc='Evaluating responses'):
     text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
     input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
 
-    # load the image
-    image = Image.open('./BAT/eval_images/' + image_name)
-    image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
+    for image_path in all_image_paths:
+        # load the image
+        image = Image.open(image_path)
+        image.save(f'./BAT/test_{total}.jpg')
+        image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
+        #print(image_tensor.shape)
 
-    # generate the model outputs
-    output_ids = model.generate(
-        input_ids,
-        images=image_tensor,
-        max_new_tokens=100,
-        use_cache=True,
-        repetition_penalty=1.0 # increase this to avoid chattering
-    )[0]
+        # generate the model outputs
+        output_ids = model.generate(
+            input_ids,
+            images=image_tensor,
+            max_new_tokens=100,
+            use_cache=True,
+            repetition_penalty=1.0 # increase this to avoid chattering
+        )[0]
 
-    # get the generated text
-    response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip().lower()
+        # get the generated text
+        response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip().lower()
+        #print(response)
 
-    if response=='yes' or response=='no':
         total += 1
-        if response=='yes':
-            correct += 1
+        correct += score_response(response)
 
+#print(f"Correct: {correct}")
+#print(f"Total: {total}")
 print(f"Accuracy: {(correct/total)*100:.2f}%")
