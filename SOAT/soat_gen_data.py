@@ -124,8 +124,11 @@ with open('./mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
 # set of allowed extensions for image
     ALLOWED_EXTS = {".jpg", ".jpeg", ".png"}
 
+# list to save data
+save_data = []
+
 # iterate through the data
-for sample in random.sample(data, 8):
+for sample in random.sample(data, 4):
     # chosen response
     chosen = sample['chosen']
     # image name
@@ -140,40 +143,55 @@ for sample in random.sample(data, 8):
     print(f"MOST IMPORTANT OBJECT: {mio}")
     print(f"VISUALLY SIMILAR OBJECT: {vso}\n\n")    
 
-    # # perform google image search
-    # image_results = google_image_search(mio, num_results=4)
+    # perform google image search
+    image_results = google_image_search(vso, num_results=4)
 
-    # if len(image_results)==0:
-    #     print(f'NO RESULTS FOUND FOR QUERY: {mio}')
-    #     continue
+    if len(image_results)==0:
+        print(f'NO RESULTS FOUND FOR QUERY: {vso}')
+        continue
 
-    # # check if we get an image
-    # success = False
+    # check if we get an image
+    success = False
     
-    # for img in image_results:
-    #     # get the image link
-    #     img_url = img['link']
+    for img in image_results:
+        # get the image link
+        img_url = img['link']
 
-    #     # download the image
-    #     response = requests.get(img_url, timeout=10)
-    #     #print(response)
+        # download the image
+        response = requests.get(img_url, timeout=10)
+        #print(response)
 
-    #     # check if download is successful
-    #     if response.status_code == 200:
-    #         # detect content-type from server response
-    #         content_type = response.headers.get("Content-Type", "")
-    #         mime = content_type.split(";")[0].strip().lower()
-    #         ext = mimetypes.guess_extension(mime)
+        # check if download is successful
+        if response.status_code == 200:
+            # detect content-type from server response
+            content_type = response.headers.get("Content-Type", "")
+            mime = content_type.split(";")[0].strip().lower()
+            ext = mimetypes.guess_extension(mime)
 
-    #         if ext in ALLOWED_EXTS:
-    #             # path of image file
-    #             file_path = os.path.join('.', f"{image_name.split('.')[0]}{ext}")
-    #             # save the image
-    #             with open(file_path, "wb") as f:
-    #                 f.write(response.content)
+            if ext in ALLOWED_EXTS:
+                # name of searched image to be saved
+                search_image_name = f"{image_name.split('.')[0]}{ext}"
 
-    #             success = True
+                # path of searched image file
+                search_file_path = './SOAT/eval_images/' + search_image_name
+                # save the image
+                with open(search_file_path, "wb") as f:
+                    f.write(response.content)
 
-    #     # if one image is downloaded successfully save it
-    #     if success:
-    #         break
+                # save searched image name
+                original = sample.copy()
+                original['search_img_path'] = search_image_name
+                save_data.append(original)
+
+                success = True
+
+        # if one image is downloaded successfully save it
+        if success:
+            break
+    
+    if not success:
+        print(f'COULD NOT RETRIEVE IMAGES FOR: {vso}')
+
+# save the generated data in a json file
+with open('./SOAT/soat_data.json', 'w') as f:
+    json.dump(save_data, f, indent=4)
