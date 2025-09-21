@@ -122,20 +122,20 @@ with open('./mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # set of allowed extensions for image
-    ALLOWED_EXTS = {".jpg", ".jpeg", ".png"}
+ALLOWED_EXTS = {".jpg", ".jpeg"}
 
 # list to save data
 save_data = []
 
 # iterate through the data
-for sample in random.sample(data, 4):
+for sample in random.sample(data, 90):
     # chosen response
     chosen = sample['chosen']
     # image name
     image_name = sample['img_path']
 
     # get the most important object in the image
-    mio = most_imp_object(openai_client, sample['chosen'])
+    mio = most_imp_object(openai_client, chosen)
     # suggest a visually similar object
     vso = hallucinate(openai_client, mio)
 
@@ -144,7 +144,7 @@ for sample in random.sample(data, 4):
     print(f"VISUALLY SIMILAR OBJECT: {vso}\n\n")    
 
     # perform google image search
-    image_results = google_image_search(vso, num_results=4)
+    image_results = google_image_search(vso, num_results=10)
 
     if len(image_results)==0:
         print(f'NO RESULTS FOUND FOR QUERY: {vso}')
@@ -157,9 +157,13 @@ for sample in random.sample(data, 4):
         # get the image link
         img_url = img['link']
 
-        # download the image
-        response = requests.get(img_url, timeout=10)
-        #print(response)
+        try:
+            # download the image
+            response = requests.get(img_url, timeout=20)
+            #print(response)
+        except:
+            print(f"IMAGE DOWNLOAD ERROR: {img_url}")
+            continue
 
         # check if download is successful
         if response.status_code == 200:
@@ -181,6 +185,8 @@ for sample in random.sample(data, 4):
                 # save searched image name
                 original = sample.copy()
                 original['search_img_path'] = search_image_name
+                original['most_important_object'] = mio
+                original['visually_similar_object'] = vso
                 save_data.append(original)
 
                 success = True
