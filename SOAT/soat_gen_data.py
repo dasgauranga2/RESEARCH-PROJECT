@@ -128,7 +128,7 @@ ALLOWED_EXTS = {".jpg", ".jpeg"}
 save_data = []
 
 # iterate through the data
-for sample in random.sample(data, 90):
+for sample in random.sample(data, 500):
     # chosen response
     chosen = sample['chosen']
     # image name

@@ -27,9 +27,12 @@ model = AutoModelForCausalLM.from_pretrained(
 
 # path of saved checkpoint
 #checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
-checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all'
+#checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all'
+checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all_attr'
 # determine if LoRA adapter weights should be used
 use_lora = True
+# checkpoint name
+checkpoint_name = checkpoint_path.split('/')[-1]
 
 if use_lora:
     model = PeftModel.from_pretrained(
@@ -51,7 +54,7 @@ tokenizer = AutoTokenizer.from_pretrained(
 with open('./SOAT/soat_data.json', 'r') as file:
     data = json.load(file)
 
-# function to evaluate the model's response and give a score 0 or 1
+# function to check if the model's response is incorrect
 def score_response(response_text):
     lower_text = response_text.strip().lower()
 
@@ -99,4 +102,4 @@ for sample in tqdm(data, desc='Evaluating responses'):
 
 #print(f"Correct: {correct}")
 #print(f"Total: {total}")
-print(f"Error Rate: {(incorrect/total)*100:.2f}%")
+print(f"{checkpoint_name} Error Rate: {(incorrect/total)*100:.2f}%")
