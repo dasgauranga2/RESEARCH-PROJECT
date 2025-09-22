@@ -16,19 +16,20 @@ import torch.nn.functional as F
 device = torch.device("cuda")
 
 # load object detection model
-model = YOLO("BAT/yolo11x-seg.pt").to(device)  # load an official model
+model = YOLO("./BAT/yolo11x-seg.pt").to(device)  # load an official model
 
 # open the training data json file
-with open('mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
+with open('./mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # load the background images where we will place objects
 bg_images = []
-for filename in os.listdir('BAT/bg_images/'):
-    filepath = os.path.join('BAT/bg_images/', filename)
+for filename in os.listdir('./BAT/bg_images/'):
+    filepath = os.path.join('./BAT/bg_images/', filename)
     try:
         bg_image = Image.open(filepath).convert("RGB")
-        bg_images.append(bg_image)
+        stem, _ = os.path.splitext(filename)
+        bg_images.append((bg_image, stem))
     except:
         print(f"Could not load image at {filepath}")
 
@@ -57,19 +58,19 @@ def place_objects(obj_masks, orig_image, height, width, background):
 
     return edited_image
 
-# list of original images
-orig_images = []
-# list of images with objects placed on different background
-edited_images = []
+# # list of original images
+# orig_images = []
+# # list of images with objects placed on different background
+# edited_images = []
 
 # list to save the data
 save_data = []
 
-for sample in random.sample(data, 100):
-    # image file name
+for sample in random.sample(data, 500):
+    # original image file name
     image_name = sample['img_path']
     # image path
-    image_path = 'mDPO/data/merged_images/' + image_name
+    image_path = './mDPO/data/merged_images/' + image_name
     # open the image 
     image = Image.open(image_path).convert("RGB")
     # dimensions of image
@@ -78,6 +79,7 @@ for sample in random.sample(data, 100):
     # run image segmentation
     result = model(
         source=image_path,
+        retina_masks=True,
         #conf=CONF,
         #iou=IOU,
         #imgsz=IMGSZ,
@@ -91,17 +93,19 @@ for sample in random.sample(data, 100):
         # shape: [num_objects, height, width]
         seg_masks = result.masks.data.float().detach().cpu()
 
-        for i, bg_image in enumerate(bg_images):
+        # iterate through background image
+        for bg_image, bg_stem in bg_images:
             # put segmented objects on background image
             db_image = place_objects(seg_masks, image, H, W, bg_image)
 
             # separate image name and image format
             splits = image_name.split('.')
             # new image file name
-            new_image_name = splits[0] + f'_{i}' + '.' + splits[1]
+            new_image_name = splits[0] + f'_{bg_stem}' + '.' + splits[1]
             
             #print(new_image_name)
-            db_image.save('BAT/eval_images/' + new_image_name)
+            # save image
+            db_image.save('./BAT/eval_images/' + new_image_name)
 
         # confidence scores
         conf = result.boxes.conf.detach()
@@ -118,12 +122,12 @@ for sample in random.sample(data, 100):
         original['most_conf_class'] = cls_name
         save_data.append(original)
 
+        # orig_images.append(image)
+        # edited_images.append(seg_image)
+
 # save the generated data in a json file
 with open('./BAT/bat_data.json', 'w') as f:
     json.dump(save_data, f, indent=4)
-
-        # orig_images.append(image)
-        # edited_images.append(seg_image)
 
 # # figure for the original image and the edited images
 # fig, axes = plt.subplots(len(orig_images), 2, figsize=(8, 3*len(orig_images)))

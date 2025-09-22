@@ -8,6 +8,7 @@ import json
 from tqdm import tqdm
 import os
 import glob
+import re
 
 # disable some warnings
 transformers.logging.set_verbosity_error()
@@ -26,10 +27,14 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True)
 
 # path of saved checkpoint
-checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
+#checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
+checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd'
 #checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all'
+#checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all_attr'
 # determine if LoRA adapter weights should be used
 use_lora = True
+# checkpoint name
+checkpoint_name = checkpoint_path.split('/')[-1]
 
 if use_lora:
     model = PeftModel.from_pretrained(
@@ -53,7 +58,7 @@ with open('./BAT/bat_data.json', 'r') as file:
 
 # function to check for all variants of an image file name
 # if original image file name is test.jpg
-# it will search for test_1.jpg, test_2.jpg, ...
+# it will search for test_snow.jpg, test_grass.jpg, ...
 def find_img_variants(img_name):
     base = os.path.basename(img_name)
     root, ext = os.path.splitext(base)
@@ -65,17 +70,17 @@ def find_img_variants(img_name):
             paths = [single]
     return paths
 
-# function to evaluate the model's response and give a score 0 or 1
-def score_response(response_text):
-    lower_text = response_text.strip().lower()
+# function to check if the model's generated response is incorrect
+def score_response(text):
+    lower_text = text.strip().lower()
 
-    if 'yes' in lower_text:
+    if 'no' in lower_text:
         return 1
     else:
         return 0
 
-correct = 0
-total = 0
+# dictionary to store results for each background image
+results = {}
 
 for sample in tqdm(data, desc='Evaluating responses'):
 #for sample in data[:4]:
@@ -88,17 +93,23 @@ for sample in tqdm(data, desc='Evaluating responses'):
     all_image_paths = find_img_variants(image_name)
 
     # query
-    query = f'Answer the question using only YES or NO. Is there a {most_conf_obj} in the image?'
+    query = f'Answer the question using only YES or NO. Is there {most_conf_obj} in the image?'
     text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
     text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
     input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
 
     for image_path in all_image_paths:
         # load the image
-        image = Image.open(image_path)
-        image.save(f'./BAT/test_{total}.jpg')
+        image = Image.open(image_path).convert("RGB")
+        #image.save(f'./BAT/test_{total}.jpg')
         image_tensor = model.process_images([image], model.config).to(dtype=model.dtype, device=device)
         #print(image_tensor.shape)
+        # load the background image type
+        bg_type = image_path.split('_')[-1]
+        if '.' in bg_type:
+            bg_type = bg_type.split('.')[0]
+        if bg_type not in results:
+            results[bg_type] = {'incorrect': 0, 'total': 0}
 
         # generate the model outputs
         output_ids = model.generate(
@@ -111,11 +122,11 @@ for sample in tqdm(data, desc='Evaluating responses'):
 
         # get the generated text
         response = tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip().lower()
-        #print(response)
 
-        total += 1
-        correct += score_response(response)
+        # update the results
+        results[bg_type]['total'] += 1
+        results[bg_type]['incorrect'] += score_response(response)
 
-#print(f"Correct: {correct}")
-#print(f"Total: {total}")
-print(f"Accuracy: {(correct/total)*100:.2f}%")
+print(f"Results for {checkpoint_name}")
+for bg_type, bg_type_results in results.items():
+    print(f"{bg_type} Error Rate: {(bg_type_results['incorrect']/bg_type_results['total'])*100:.2f}%")
