@@ -27,10 +27,10 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True)
 
 # path of saved checkpoint
-#checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
-checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd'
+checkpoint_path = './mDPO/checkpoint/mdpo_bunny'
+#checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd'
 #checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all'
-#checkpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all_attr'
+#heckpoint_path = './mDPO/checkpoint/mdpo_bunny_sd_all_attr'
 # determine if LoRA adapter weights should be used
 use_lora = True
 # checkpoint name
@@ -92,13 +92,13 @@ for sample in tqdm(data, desc='Evaluating responses'):
     # get paths of all variants of original image that was saved
     all_image_paths = find_img_variants(image_name)
 
-    # query
-    query = f'Answer the question using only YES or NO. Is there {most_conf_obj} in the image?'
-    text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
-    text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
-    input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
-
     for image_path in all_image_paths:
+        # query
+        query = f'Answer the question using only YES or NO. Is there {most_conf_obj} in the image?'
+        text = f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: <image>\n{query} ASSISTANT:"
+        text_chunks = [tokenizer(chunk).input_ids for chunk in text.split('<image>')]
+        input_ids = torch.tensor(text_chunks[0] + [-200] + text_chunks[1], dtype=torch.long).unsqueeze(0).to(device)
+
         # load the image
         image = Image.open(image_path).convert("RGB")
         #image.save(f'./BAT/test_{total}.jpg')
