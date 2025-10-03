@@ -493,43 +493,41 @@ class mDPOCNIDataCollatorBunny(DPODataCollatorWithPadding):
             # collate the list of data points
             collated_batch = self.collate(tokenized_batch)
             return collated_batch
-    
-IGNORE_INDEX = -100
-MASK_PLACEHOLDER_START = "<MASK>"
-MASK_PLACEHOLDER_END = "</MASK>"
 
-# class used as a data collator to prepare and tokenize batches for mdpo
+# class used as a data collator to prepare and tokenize batches for DPA
 # it tokenizes text inputs, processes the images, creates the attention masks and labels
 @dataclass
 class DPADataCollatorBunny(DPODataCollatorWithPadding):
 
+    # function that takes as input a prompt and masked answer and returns
+    # input_ids: token IDs for [prompt + answer + EOS]
+    # attention_mask: 1 for real tokens, 0 for padding
+    # labels: same as input_ids but with prompt positions set to -100
+    # signs: tensor of integers with same size as input_ids, where
+    # 0 = not part of any masked phrase (incl. prompt tokens)
+    # 1 = token belongs to masked phrase #1
+    # 2 = token belongs to masked phrase #2, and so on
     def tokenize_with_signs(self, prompt: str, answer_masked: str):
-        """
-        Tokenize a (prompt + masked answer) into input_ids, labels, and signs.
-
-        Returns:
-        - input_ids: token IDs for [prompt + answer + EOS]
-        - attention_mask: 1 for real tokens, 0 for padding
-        - labels: same as input_ids but with prompt positions set to IGNORE_INDEX
-        - signs: span membership map aligned to input_ids
-            0 = not part of any masked phrase (incl. prompt tokens)
-            1, 2, ... = token belongs to masked phrase #1, #2, ...
-        """
-        # tokenize prompt (already contains <image>)
+        # tokenize the prompt
         prompt_tokens = tokenizer_image_token(prompt, self.tokenizer)
+        # attention mask for prompt
         prompt_attention = [1] * len(prompt_tokens)
 
-        # tokenize answer with <MASK> tags
+        # list of tokens
         tokens = []
+        # list of signs
         signs = []
-        start_tag, end_tag = MASK_PLACEHOLDER_START, MASK_PLACEHOLDER_END
+        # start and end of masked phrase
+        start_tag, end_tag = "<MASK>", "</MASK>"
         span_id = 1
         start_index = 0
 
+        # loop to tokenize the answer
         while True:
+            # find the first occurrence of <MASK> after start_index
             start_pos = answer_masked.find(start_tag, start_index)
+            # if no more mask is found, add the remaining string and break loop
             if start_pos == -1:
-                # remaining unmasked piece
                 piece = answer_masked[start_index:]
                 if piece.strip():
                     piece_tokens = self.tokenizer(piece, add_special_tokens=False)["input_ids"]
@@ -537,15 +535,16 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
                     signs.extend([0] * len(piece_tokens))
                 break
 
-            # unmasked part before this mask
+            # tokenize the piece before the mask
             piece = answer_masked[start_index:start_pos]
             if piece.strip():
                 piece_tokens = self.tokenizer(piece, add_special_tokens=False)["input_ids"]
                 tokens.extend(piece_tokens)
                 signs.extend([0] * len(piece_tokens))
 
-            # masked span itself
+            # find the closing </MASK> tag
             end_pos = answer_masked.find(end_tag, start_pos)
+            # tokenize the piece between <MASK> and </MASK>
             masked_piece = answer_masked[start_pos + len(start_tag): end_pos]
             if masked_piece.strip():
                 piece_tokens = self.tokenizer(masked_piece, add_special_tokens=False)["input_ids"]
@@ -553,6 +552,8 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
                 signs.extend([span_id] * len(piece_tokens))
                 span_id += 1
 
+            # update start_index 
+            # to continue searching after the </MASK> tag
             start_index = end_pos + len(end_tag)
 
         # add EOS
@@ -566,19 +567,18 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
         # combine
         input_ids = prompt_tokens + tokens
         attention_mask = prompt_attention + [1] * len(tokens)
-        labels = [IGNORE_INDEX] * len(prompt_tokens) + tokens
+        labels = [-100] * len(prompt_tokens) + tokens
 
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-            "signs": signs,
+            "input_ids": input_ids, # input token IDs
+            "attention_mask": attention_mask, # attention mask
+            "labels": labels, # labels with prompt positions masked
+            "signs": signs, # mask phrase membership map
         }
     
+    # function to convert a DPA-style prompt 
+    # into a Bunny/mDPO-style conversation prompt
     def convert_prompt(self, original_prompt):
-        """
-        Convert a DPA-style prompt into Bunny/mDPO-style conversation prompt.
-        """
         bunny_prefix = (
             "A chat between a curious user and an artificial intelligence assistant. "
             "The assistant gives helpful, detailed, and polite answers to the user's questions. "
@@ -587,28 +587,32 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
         bunny_suffix = " ASSISTANT:"
         return f"{bunny_prefix}{original_prompt}{bunny_suffix}"
 
+    # function to tokenize a single data point
     def tokenize_batch_element(self, prompt, chosen_masked, rejected_masked, img_path):
         batch = {}
+        
+        # convert the prompt to Bunny/mDPO style
         prompt = self.convert_prompt(prompt)
 
-        # chosen (correct)
+        # tokenize the prompt + chosen response
         chosen_dict = self.tokenize_with_signs(prompt, chosen_masked)
         for k, v in chosen_dict.items():
             batch[f"chosen_{k}"] = v
 
-        # rejected (hallucinated)
+        # tokenize the prompt + rejected response
         rejected_dict = self.tokenize_with_signs(prompt, rejected_masked)
         for k, v in rejected_dict.items():
             batch[f"rejected_{k}"] = v
 
-        # image
+        # load the image
         image = Image.open('./data/' + img_path).convert("RGB")
+        # convert the image to a tensor
         image_tensor = self.model.process_images([image], self.model.config).to(dtype=self.model.dtype)
         batch["image"] = image_tensor
 
         # the final result will be of this format
         # batch = {
-        #   # ----------------- Chosen (correct) sequence -----------------
+        #   # ----------------- chosen response -----------------
         #   "chosen_input_ids": [101, 2003, 1037, 2158, 2009, 1012, 102],  
         #       # token IDs for the prompt + chosen (correct) response
         #
@@ -625,7 +629,7 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
         #       #   1 = token belongs to masked phrase #1
         #       #   2 = token belongs to masked phrase #2, etc.
         #
-        #   # ----------------- Rejected (hallucinated) sequence -----------------
+        #   # ----------------- rejected response -----------------
         #   "rejected_input_ids": [101, 2003, 1037, 3899, 2009, 1012, 102],  
         #       # token IDs for the prompt + rejected (hallucinated) response
         #
@@ -647,6 +651,7 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         tokenized_batch = []
+
         for feature in features:
             prompt = feature["question"]
             chosen_masked = feature["correct_answer_masked"]
@@ -656,6 +661,7 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
             batch_element = self.tokenize_batch_element(prompt, chosen_masked, rejected_masked, img_path)
             tokenized_batch.append(batch_element)
 
+        # collate the list of data points
         collated_batch = self.collate(tokenized_batch)
         return collated_batch
     
