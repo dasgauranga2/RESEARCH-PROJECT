@@ -2,7 +2,7 @@ from typing import Dict, List, Union, Tuple, Literal
 import torch.distributed
 from trl.trainer import DPOTrainer
 from trl.trainer.utils import pad_to_length
-import difflib
+from diff_lib import get_diff_ids
 
 # custom class for training using mDPO
 class mDPOTrainer(DPOTrainer):
@@ -953,87 +953,113 @@ class DPATrainer(DPOTrainer):
         return loss, metrics
     
 # custom class for training using CHIP
-class CHIPTrainer(DPOTrainer):
-    def segment_loss(
+class CHiPTrainer(DPOTrainer):
+    # # function to calculate the segment-level loss
+    # def segment_loss(
+    #     self,
+    #     per_token_logps_chosen,      # (B, L_logits_c)  may include image tokens
+    #     per_token_logps_rejected,    # (B, L_logits_r)
+    #     chosen_labels,               # (B, L_labels)
+    #     rejected_labels,             # (B, L_labels)
+    #     dpo_token_weight: float = 4.0,
+    # ):
+    #     """
+    #     Segment-level contrastive loss that (1) aligns logits to the *shifted* label
+    #     length (labels[:,1:]) and (2) upweights positions where chosen/rejected labels differ.
+    #     """
+
+    #     # --- 1) use shifted labels (the same shift used to compute per-token logps) ---
+    #     chosen_labels_s   = chosen_labels[:, 1:].clone()
+    #     rejected_labels_s = rejected_labels[:, 1:].clone()
+
+    #     # --- 2) align logits len to labels len (truncate from the right if longer) ---
+    #     T_c = chosen_labels_s.shape[1]
+    #     T_r = rejected_labels_s.shape[1]
+
+    #     if per_token_logps_chosen.shape[1] != T_c:
+    #         per_token_logps_chosen = per_token_logps_chosen[:, -T_c:]
+    #     if per_token_logps_rejected.shape[1] != T_r:
+    #         per_token_logps_rejected = per_token_logps_rejected[:, -T_r:]
+
+    #     # --- 3) valid masks (ignore padding -100) ---
+    #     mask_c = (chosen_labels_s != -100)
+    #     mask_r = (rejected_labels_s != -100)
+
+    #     # --- 4) differing-token mask (only on positions that exist in both) ---
+    #     # lengths T_c and T_r can differ; compare on the overlap region
+    #     T = min(T_c, T_r)
+    #     diff_same_len = (chosen_labels_s[:, :T] != rejected_labels_s[:, :T]) & mask_c[:, :T] & mask_r[:, :T]
+
+    #     # initialize weights as 1.0 on valid tokens
+    #     weight_c = mask_c.float()
+    #     weight_r = mask_r.float()
+
+    #     # upweight only the overlapping differing region
+    #     weight_c[:, :T][diff_same_len] *= dpo_token_weight
+    #     weight_r[:, :T][diff_same_len] *= dpo_token_weight
+
+    #     # --- 5) weighted scores (normalize by effective weights) ---
+    #     # (Make sure everything is on the same device / dtype)
+    #     weight_c = weight_c.to(per_token_logps_chosen.dtype).to(per_token_logps_chosen.device)
+    #     weight_r = weight_r.to(per_token_logps_rejected.dtype).to(per_token_logps_rejected.device)
+
+    #     chosen_score   = (per_token_logps_chosen * weight_c).sum(-1) / weight_c.sum(-1).clamp(min=1)
+    #     rejected_score = (per_token_logps_rejected * weight_r).sum(-1) / weight_r.sum(-1).clamp(min=1)
+
+    #     # --- 6) logistic loss on the difference ---
+    #     seg_logits = chosen_score - rejected_score
+    #     seg_loss = -torch.nn.functional.logsigmoid(seg_logits)
+    #     return seg_loss
+
+    # function to calculate the segment-level action score
+    def segment_action_score(
         self,
-        per_token_logps_chosen,      # (B, L_logits_c)  may include image tokens
-        per_token_logps_rejected,    # (B, L_logits_r)
-        chosen_labels,               # (B, L_labels)
-        rejected_labels,             # (B, L_labels)
+        per_token_logps,        # (B, L_logits)
+        labels,                 # (B, L_labels)
+        other_labels=None,      # (B, L_labels) from the opposite response, used to find differing tokens
         dpo_token_weight: float = 4.0,
     ):
         """
-        Segment-level contrastive loss that (1) aligns logits to the *shifted* label
-        length (labels[:,1:]) and (2) upweights positions where chosen/rejected labels differ.
+        Compute the segment-level action score A_seg for a *single* response under one model.
+
+        Args:
+            per_token_logps: per-token log probabilities from the model (B, L)
+            labels: corresponding token labels (B, L)
+            other_labels: optional second sequence (e.g., the opposite response)
+                        used to identify differing tokens y_c between responses.
+                        If None, weights = 1 everywhere (no upweighting).
+            dpo_token_weight: gamma factor to upweight differing tokens.
+        Returns:
+            action_score: (B,) tensor of weighted average log-probabilities
+                        i.e., A_seg(y|x,m)
         """
 
-        # --- 1) use shifted labels (the same shift used to compute per-token logps) ---
-        chosen_labels_s   = chosen_labels[:, 1:].clone()
-        rejected_labels_s = rejected_labels[:, 1:].clone()
+        # --- 1) Shift labels to align with next-token predictions ---
+        labels_s = labels[:, 1:].clone()
+        per_token_logps = per_token_logps[:, -labels_s.shape[1]:]
 
-        # --- 2) align logits len to labels len (truncate from the right if longer) ---
-        T_c = chosen_labels_s.shape[1]
-        T_r = rejected_labels_s.shape[1]
+        # --- 2) Valid mask (ignore padding tokens) ---
+        mask = (labels_s != -100)
 
-        if per_token_logps_chosen.shape[1] != T_c:
-            per_token_logps_chosen = per_token_logps_chosen[:, -T_c:]
-        if per_token_logps_rejected.shape[1] != T_r:
-            per_token_logps_rejected = per_token_logps_rejected[:, -T_r:]
+        # --- 3) Compute differing-token mask if other_labels is provided ---
+        if other_labels is not None:
+            other_labels_s = other_labels[:, 1:].clone()
+            T = min(labels_s.shape[1], other_labels_s.shape[1])
+            diff_mask = (labels_s[:, :T] != other_labels_s[:, :T]) & mask[:, :T] & (other_labels_s[:, :T] != -100)
+        else:
+            # no comparison → no special weighting
+            T = labels_s.shape[1]
+            diff_mask = torch.zeros_like(mask[:, :T], dtype=torch.bool)
 
-        # --- 3) valid masks (ignore padding -100) ---
-        mask_c = (chosen_labels_s != -100)
-        mask_r = (rejected_labels_s != -100)
+        # --- 4) Assign weights ---
+        weight = mask.float()
+        weight[:, :T][diff_mask] += dpo_token_weight
 
-        # --- 4) differing-token mask (only on positions that exist in both) ---
-        # lengths T_c and T_r can differ; compare on the overlap region
-        T = min(T_c, T_r)
-        diff_same_len = (chosen_labels_s[:, :T] != rejected_labels_s[:, :T]) & mask_c[:, :T] & mask_r[:, :T]
+        # --- 5) Weighted average log-probability (segment-level action score) ---
+        weight = weight.to(per_token_logps.dtype).to(per_token_logps.device)
+        action_score = (per_token_logps * weight).sum(-1) / weight.sum(-1).clamp(min=1)
 
-        # initialize weights as 1.0 on valid tokens
-        weight_c = mask_c.float()
-        weight_r = mask_r.float()
-
-        # upweight only the overlapping differing region
-        weight_c[:, :T][diff_same_len] *= dpo_token_weight
-        weight_r[:, :T][diff_same_len] *= dpo_token_weight
-
-        # --- 5) weighted scores (normalize by effective weights) ---
-        # (Make sure everything is on the same device / dtype)
-        weight_c = weight_c.to(per_token_logps_chosen.dtype).to(per_token_logps_chosen.device)
-        weight_r = weight_r.to(per_token_logps_rejected.dtype).to(per_token_logps_rejected.device)
-
-        chosen_score   = (per_token_logps_chosen * weight_c).sum(-1) / weight_c.sum(-1).clamp(min=1)
-        rejected_score = (per_token_logps_rejected * weight_r).sum(-1) / weight_r.sum(-1).clamp(min=1)
-
-        # --- 6) logistic loss on the difference ---
-        seg_logits = chosen_score - rejected_score
-        seg_loss = -torch.nn.functional.logsigmoid(seg_logits)
-        return seg_loss
-
-
-    def compute_weighted_logp(self, per_token_logp, labels, token_weight, use_average=False):
-        """
-        Compute weighted log-probs for a sequence, aligning model outputs (which
-        may include image tokens) with text labels/weights length.
-        """
-        # mask only text tokens (ignore padding -100)
-        loss_mask = (labels[:, 1:].clone() != -100)
-
-        # elementwise weighting
-        weighted_mask = token_weight * loss_mask
-
-        # 🔑 Align lengths: per_token_logp may include extra tokens (e.g., image tokens),
-        # so truncate it from the right to match the weighted_mask length.
-        if len(per_token_logp.shape) != 1:
-            per_token_logp = per_token_logp[:, -weighted_mask.shape[1]:]
-
-        logp = (per_token_logp * weighted_mask).sum(-1)
-
-        average_logp = logp / weighted_mask.sum(-1)
-        if use_average:
-            return average_logp
-        return logp
-
+        return action_score
     
     def get_batch_logps(self, logits, labels, return_all=False):
         """
@@ -1104,32 +1130,34 @@ class CHIPTrainer(DPOTrainer):
                 (per_uncond_ref_token_logps * loss_mask).sum(-1), \
                 per_policy_token_logps, per_reference_token_logps, per_uncond_ref_token_logps
 
+    # return the final loss for gradient calculation and metrics
     def get_batch_metrics(
         self,
         model,
         batch: Dict[str, Union[List, torch.LongTensor]],
         train_eval: Literal["train", "eval"] = "train",
     ):
+        # dictionary to store the metrics to be displayed
         metrics = {}
 
-        # ==== 1. Forward pass for chosen/rejected (Response-Level) ====
+        # find the maximum length among chosen and rejected sequences
         max_len = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
 
+        # pad the chosen and rejected sequences (input_ids, attention mask, labels)
         chosen_input_ids = pad_to_length(batch["chosen_input_ids"], max_len, pad_value=self.padding_value)
         rejected_input_ids = pad_to_length(batch["rejected_input_ids"], max_len, pad_value=self.padding_value)
-
         chosen_attention_mask = pad_to_length(batch["chosen_attention_mask"], max_len, pad_value=0)
         rejected_attention_mask = pad_to_length(batch["rejected_attention_mask"], max_len, pad_value=0)
-
         chosen_labels = pad_to_length(batch["chosen_labels"], max_len, pad_value=self.label_pad_token_id)
         rejected_labels = pad_to_length(batch["rejected_labels"], max_len, pad_value=self.label_pad_token_id)
 
-        # Concatenate for a single forward pass
+        # concatenate the chosen and rejected sequences along the batch dimension
         batch["concatenated_input_ids"] = torch.cat([chosen_input_ids, rejected_input_ids], dim=0)
         batch["concatenated_attention_mask"] = torch.cat([chosen_attention_mask, rejected_attention_mask], dim=0)
         batch["concatenated_labels"] = torch.cat([chosen_labels, rejected_labels], dim=0)
         batch["concatenated_images"] = batch["image"] + batch["image"]
 
+        # pass the chosen and rejected responses with the original image to the model
         outputs, refined_labels = model(
             batch["concatenated_input_ids"],
             attention_mask=batch["concatenated_attention_mask"],
@@ -1141,10 +1169,12 @@ class CHIPTrainer(DPOTrainer):
         policy_logps = self._get_batch_logps(logits, refined_labels, average_log_prob=False)
 
         len_chosen = batch["chosen_labels"].shape[0]
+        # log-probabilities of chosen response for the policy model
         policy_chosen_logps = policy_logps[:len_chosen]
+        # log-probabilities of rejected response for the policy model
         policy_rejected_logps = policy_logps[len_chosen:]
 
-        # ==== 2. Visual preference pass (chosen + corrupted image) ====
+        # pass the chosen response with the corrupted image to the model
         visual_outputs, visual_labels = model(
             batch["chosen_input_ids"],
             attention_mask=batch["chosen_attention_mask"],
@@ -1152,9 +1182,10 @@ class CHIPTrainer(DPOTrainer):
             labels=batch["chosen_labels"],
         )
         visual_logits = visual_outputs.logits.to(torch.float32)
+        # log-probabilities of chosen response with corrupted image for the policy model
         policy_visual_logps = self._get_batch_logps(visual_logits, visual_labels, average_log_prob=False)
 
-        # ==== 3. Reference model forward ====
+        # reference model forward pass (frozen)
         with torch.no_grad():
             if self.ref_model is None:
                 with self.accelerator.unwrap_model(self.model).disable_adapter():
@@ -1186,59 +1217,82 @@ class CHIPTrainer(DPOTrainer):
 
         ref_logits = ref_outputs.logits.to(torch.float32)
         reference_logps = self._get_batch_logps(ref_logits, ref_labels, average_log_prob=False)
+        # log-probabilities of chosen response for the reference model
         reference_chosen_logps = reference_logps[:len_chosen]
+        # log-probabilities of rejected response for the reference model
         reference_rejected_logps = reference_logps[len_chosen:]
 
         uncond_ref_logits = uncond_ref_outputs.logits.to(torch.float32)
         uncond_ref_logps = self._get_batch_logps(uncond_ref_logits, uncond_ref_labels, average_log_prob=False)
-        uncond_ref_win_logp, uncond_ref_rej_logp = uncond_ref_logps.split([len_chosen, len_chosen])
+        # log-probabilities of chosen response with corrupted image for the reference model
+        uncond_ref_win_logp, _ = uncond_ref_logps.split([len_chosen, len_chosen])
 
-        # ==== 4. Token-level KL divergence ====
+        # calculates the per-position KL divergence 
+        # between the policy and reference model
         all_position_kl, _, _, _, _, _, _ = self.chip_get_batch_logps(
             logits, ref_logits, uncond_ref_logits, refined_labels, average_log_prob=False
         )
+        # split the KL divergence between policy and reference model
+        # for chosen and rejected responses
         chosen_position_kl, rejected_position_kl = all_position_kl.split([len_chosen, len_chosen])
 
-        # ==== 5. Segment-level contrastive loss ====
+        # calculates per-token log-probabilities for 
+        # chosen and rejected responses for policy
         per_token_logps, _, _ = self.get_batch_logps(logits, refined_labels, return_all=True)
         per_token_logps_chosen = per_token_logps[:len_chosen]
         per_token_logps_rejected = per_token_logps[len_chosen:]
+        # calculates per-token log-probabilities for
+        # chosen and rejected responses for reference
+        ref_per_token_logps, _, _ = self.get_batch_logps(ref_logits, ref_labels, return_all=True)
+        ref_per_token_logps_chosen = ref_per_token_logps[:len_chosen]
+        ref_per_token_logps_rejected = ref_per_token_logps[len_chosen:]
 
-        loss_segment = self.segment_loss(
-            per_token_logps_chosen,
-            per_token_logps_rejected,
-            chosen_labels,
-            rejected_labels,
-            dpo_token_weight=4.0
-        )
+        #beta, lambda_seg, gamma_tok = 0.5, 2.0, 0.1
+        BETA = 0.5
+        LAMBDA_SEG = 2.0
+        GAMMA_TOK = 0.1
+        
+        # calculate segment-level action score for chosen response for policy
+        sla_policy_chosen = self.segment_action_score(per_token_logps_chosen, chosen_labels, rejected_labels)
+        # calculate segment-level action score for rejected response for policy
+        sla_policy_rejected = self.segment_action_score(per_token_logps_rejected, rejected_labels, chosen_labels)
+        # calculate segment-level action score for chosen response for reference
+        sla_ref_chosen = self.segment_action_score(ref_per_token_logps_chosen, chosen_labels, rejected_labels)
+        # calculate segment-level action score for rejected response for reference
+        sla_ref_rejected = self.segment_action_score(ref_per_token_logps_rejected, rejected_labels, chosen_labels)
 
-        # ==== 6. Aggregate CHiP loss ====
-        logits_response = (policy_chosen_logps - policy_rejected_logps) - (
-            reference_chosen_logps - reference_rejected_logps
+        # calculate the segment-level loss
+        seg_logits = (sla_policy_chosen - sla_policy_rejected) - (sla_ref_chosen - sla_ref_rejected)
+        loss_segment = -torch.nn.functional.logsigmoid(BETA * seg_logits)
+
+        # calculate the response-level loss
+        logits_response = (
+            (policy_chosen_logps - policy_rejected_logps) 
+            - (reference_chosen_logps - reference_rejected_logps)
+            - GAMMA_TOK*(rejected_position_kl - chosen_position_kl.detach())
         )
+        loss_response = -torch.nn.functional.logsigmoid(BETA * logits_response)
+
+        # calculate the visual-preference loss
         logits_visual = (policy_chosen_logps - policy_visual_logps) - (
             reference_chosen_logps - uncond_ref_win_logp
         )
-        logits_token = -(rejected_position_kl - chosen_position_kl.detach())
+        loss_visual = -torch.nn.functional.logsigmoid(BETA * logits_visual)
 
-        beta, lambda_seg, gamma_tok = 0.5, 2.0, 0.1
-        loss_response = -torch.nn.functional.logsigmoid(beta * logits_response)
-        loss_visual = -torch.nn.functional.logsigmoid(beta * logits_visual)
-        loss_token = -torch.nn.functional.logsigmoid(gamma_tok * logits_token)
+        # aggregate all the losses
+        losses = loss_response + loss_visual + LAMBDA_SEG*loss_segment
 
-        losses = loss_response + loss_visual + loss_segment + loss_token
-
-        # ==== Rewards (logging only) ====
-        chosen_rewards = beta * (policy_chosen_logps - reference_chosen_logps).detach()
-        rejected_rewards = beta * (policy_rejected_logps - reference_rejected_logps).detach()
+        # calculate the rewards
+        chosen_rewards = BETA * (policy_chosen_logps - reference_chosen_logps).detach()
+        rejected_rewards = BETA * (policy_rejected_logps - reference_rejected_logps).detach()
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
+        # log the metrics
         prefix = "eval_" if train_eval == "eval" else ""
         metrics[f"{prefix}loss"] = losses.mean().item()
         metrics[f"{prefix}response_loss"] = loss_response.mean().item()
         metrics[f"{prefix}visual_loss"] = loss_visual.mean().item()
         metrics[f"{prefix}segment_loss"] = loss_segment.mean().item()
-        metrics[f"{prefix}token_loss"] = loss_token.mean().item()
         metrics[f"{prefix}rewards/chosen"] = chosen_rewards.mean().item()
         metrics[f"{prefix}rewards/rejected"] = rejected_rewards.mean().item()
         metrics[f"{prefix}rewards/accuracies"] = reward_accuracies.mean().item()

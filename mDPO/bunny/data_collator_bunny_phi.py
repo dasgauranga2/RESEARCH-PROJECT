@@ -665,10 +665,10 @@ class DPADataCollatorBunny(DPODataCollatorWithPadding):
         collated_batch = self.collate(tokenized_batch)
         return collated_batch
     
-# class used as a data collator to prepare and tokenize batches for mdpo
+# class used as a data collator to prepare and tokenize batches for CHiP
 # it tokenizes text inputs, processes the images, creates the attention masks and labels
 @dataclass
-class CHIPDataCollatorBunny(DPODataCollatorWithPadding):
+class CHiPDataCollatorBunny(DPODataCollatorWithPadding):
     # add forward diffusion noise
     def add_diffusion_noise(self, image_tensor, noise_step):
         num_steps = 1000  # Number of diffusion steps
