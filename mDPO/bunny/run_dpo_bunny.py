@@ -291,13 +291,13 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = CHiPTrainer(
+    trainer = DPATrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=CHiPDataCollatorBunny(
+        data_collator=DPADataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,

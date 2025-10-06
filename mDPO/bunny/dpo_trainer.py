@@ -710,40 +710,68 @@ class mDPOCNITrainer(DPOTrainer):
     
 # custom class for training using DPA
 class DPATrainer(DPOTrainer):
-    def cal_batch_logp(
-        self,
-        logits: torch.FloatTensor,
-        labels: torch.LongTensor,
-    ) -> torch.FloatTensor:
-
-        if logits.shape[:-1] != labels.shape:
-            raise ValueError("Logits (batch and sequence length dim) and labels must have the same shape.")
-
-        # decoder only model
-        if not self.is_encoder_decoder:
+    # ---------------- utilities ----------------
+    def cal_batch_logp(self, logits, labels, label_pad_token_id=-100, is_encoder_decoder=False):
+        """Compute per-token log-probabilities."""
+        if not is_encoder_decoder:
             labels = labels[:, 1:].clone()
             logits = logits[:, :-1, :]
 
-        labels[labels == self.label_pad_token_id] = 0
-        per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
+        labels = labels.clone()
+        labels[labels == label_pad_token_id] = 0
+
+        per_token_logps = torch.gather(
+            logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)
+        ).squeeze(2)
 
         return per_token_logps
-    
+
     def accumulate_logps(self, logps, signs):
-        unique_signs, indices = torch.unique(signs, sorted=True, return_inverse=True)
-        accumulated_logps = torch.zeros(signs.size(0), len(unique_signs) - 1, dtype=logps.dtype, device=logps.device)
-        
-        for i, sign in enumerate(unique_signs[1:]):
-            mask = (signs == sign).float()
-            accumulated_logps[:, i] = (logps * mask).sum(dim=-1)
-        
-        return accumulated_logps
-    
-    # function to expand signs to match the length of expanded labels
-    def expand_signs(self, original_input_ids, original_signs, original_labels, expanded_labels,
-                                        image_token_id=-200, ignore_index=-100):
         """
-        Expand `signs` to align with expanded_labels, using original_input_ids and labels.
+        Aggregate log-probs at phrase level using signs.
+        - logps: [batch, seq_len]
+        - signs: [batch, seq_len], integers (0 = non-span, >0 = span ID)
+        """
+        signs = signs[:, 1:].clone()  # ignore first token
+        unique_signs = torch.unique(signs)
+        phrase_ids = [s.item() for s in unique_signs if s.item() > 0]
+
+        span_logps = []
+        for span_id in phrase_ids:
+            mask = (signs == span_id).float()
+            span_logp = (logps * mask).sum(dim=-1)  # sum over tokens
+            span_logps.append(span_logp.unsqueeze(1))
+
+        if len(span_logps) == 0:
+            return torch.zeros(logps.size(0), 0, device=logps.device)
+
+        return torch.cat(span_logps, dim=1)
+
+    def forward_batch(self, model, input_ids, labels, attention_mask, signs, images, label_pad_token_id=-100):
+        """Run a forward pass and return per-token logps, logits, and refined labels."""
+        outputs, refined_labels = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,          # raw labels, may be refined inside model
+            images=images,
+        )
+        logits = outputs.logits.to(torch.float32)
+
+        # use refined_labels for logps
+        logps = self.cal_batch_logp(logits, refined_labels, label_pad_token_id=label_pad_token_id)
+        return logps, logits, refined_labels
+
+    def expand_signs(
+        self,
+        original_input_ids,
+        original_signs,
+        original_labels,
+        expanded_labels,
+        image_token_id=-200,
+    ):
+        """
+        Expand `signs` to align with expanded_labels when image tokens are replaced
+        by multiple visual embeddings (e.g., Bunny/SigLIP).
 
         Assumes:
             - Each sequence contains exactly ONE <image> token.
@@ -753,198 +781,123 @@ class DPATrainer(DPOTrainer):
             expanded_signs: Tensor [B, T_exp], aligned with expanded_labels.
         """
         B, T_exp = expanded_labels.shape
+        T_orig = original_labels.shape[1]
 
-        # num_image_slots = expanded - (original - 1), because one <image> is replaced
-        num_image_slots = expanded_labels.shape[1] - (original_labels.shape[1] - 1)
+        # number of new image tokens inserted
+        num_image_slots = T_exp - (T_orig - 1)
 
-        expanded_signs = torch.full((B, T_exp), ignore_index, dtype=torch.long, device=original_input_ids.device)
+        expanded_signs = torch.zeros(
+            (B, T_exp), dtype=torch.long, device=original_input_ids.device
+        )
 
         for b in range(B):
             exp_pos = 0
             for t, tok in enumerate(original_input_ids[b]):
                 if tok.item() == image_token_id:
+                    # fill visual token region with zeros (non-span)
+                    fill_end = min(exp_pos + num_image_slots, T_exp)
+                    expanded_signs[b, exp_pos:fill_end] = 0
                     exp_pos += num_image_slots
                 else:
                     if exp_pos < T_exp:
-                        if t < len(original_signs[b]):
-                            expanded_signs[b, exp_pos] = original_signs[b][t]
-                        else:
-                            expanded_signs[b, exp_pos] = ignore_index
+                        val = (
+                            original_signs[b][t]
+                            if t < len(original_signs[b])
+                            else 0
+                        )
+                        expanded_signs[b, exp_pos] = val
                         exp_pos += 1
-                        
+
         return expanded_signs
 
-    def forward_batch(self, model, batch):
-        """
-        Run forward passes for chosen and rejected sequences and return
-        log-probs, logits, labels, and signs for each branch.
-        """
 
-        # ---------------- chosen part ----------------
-        model_kwargs = {
-            "labels": batch["chosen_labels"],
-            "images": batch["image"],
-        }
-        chosen_outputs, chosen_labels = model(
-            batch["chosen_input_ids"],
-            attention_mask=batch["chosen_attention_mask"],
-            **model_kwargs,
-        )
-        chosen_logits = chosen_outputs.logits.to(torch.float32)
-
-        chosen_logps = self.cal_batch_logp(
-            chosen_logits,
-            chosen_labels,
-        )
-        
-        chosen_expanded_signs = self.expand_signs(batch["chosen_input_ids"],
-                                                  batch["chosen_signs"],
-                                                  batch["chosen_labels"],
-                                                  chosen_labels,
-                                                  image_token_id=-200,
-                                                  ignore_index=-100)
-
-        # ---------------- rejected part ----------------
-        model_kwargs = {
-            "labels": batch["rejected_labels"],
-            "images": batch["image"],
-        }
-        rejected_outputs, rejected_labels = model(
-            batch["rejected_input_ids"],
-            attention_mask=batch["rejected_attention_mask"],
-            **model_kwargs,
-        )
-        rejected_logits = rejected_outputs.logits.to(torch.float32)
-
-        rejected_logps = self.cal_batch_logp(
-            rejected_logits,
-            rejected_labels,
-        )
-
-        rejected_expanded_signs = self.expand_signs(batch["rejected_input_ids"],
-                                                    batch["rejected_signs"],
-                                                    batch["rejected_labels"],
-                                                    rejected_labels,
-                                                    image_token_id=-200,
-                                                    ignore_index=-100)
-
-        # ---------------- return everything ----------------
-        return (
-            chosen_logps,
-            rejected_logps,
-            chosen_labels,
-            rejected_labels,
-            chosen_logits,
-            rejected_logits,
-            chosen_expanded_signs,
-            rejected_expanded_signs,
-        )
-
-    # return the final loss for gradient calculation and metrics
+    # ---------------- metrics & loss ----------------
     def get_batch_metrics(
         self,
         model,
         batch,
         train_eval: Literal["train", "eval"] = "train",
-    ):  
-        # dictionary to store the metrics to be displayed
+    ):
         metrics = {}
 
-        # -------------------- alignment loss --------------------
-        (
-            chosen_logps,
-            rejected_logps,
+        # -------- policy forward (chosen + rejected) --------
+        chosen_logps, chosen_logits, chosen_labels = self.forward_batch(
+            model,
+            batch["chosen_input_ids"],
+            batch["chosen_labels"],
+            batch["chosen_attention_mask"],
+            batch["chosen_signs"],
+            batch["image"],
+        )
+        rejected_logps, rejected_logits, rejected_labels = self.forward_batch(
+            model,
+            batch["rejected_input_ids"],
+            batch["rejected_labels"],
+            batch["rejected_attention_mask"],
+            batch["rejected_signs"],
+            batch["image"],
+        )
+
+        # -------- expand signs --------
+        batch["chosen_signs"] = self.expand_signs(
+            batch["chosen_input_ids"],
+            batch["chosen_signs"],
+            batch["chosen_labels"],
             chosen_labels,
+            image_token_id=-200
+        )
+
+        batch["rejected_signs"] = self.expand_signs(
+            batch["rejected_input_ids"],
+            batch["rejected_signs"],
+            batch["rejected_labels"],
             rejected_labels,
-            chosen_logits,
-            rejected_logits,
-            chosen_signs,
-            rejected_signs,
-        ) = self.forward_batch(model, batch)
+            image_token_id=-200
+        )
 
-        # masks (True for real tokens, False for -100)
-        chosen_loss_mask = (chosen_labels[:, 1:] != -100).float()
-        rejected_loss_mask = (rejected_labels[:, 1:] != -100).float()
+        # -------- accumulate logps --------
+        pos_logps_acc = self.accumulate_logps(chosen_logps, batch["chosen_signs"])
+        neg_logps_acc = self.accumulate_logps(rejected_logps, batch["rejected_signs"])
+        alignment_loss = torch.log(1 + torch.exp(neg_logps_acc - pos_logps_acc)).mean()
 
-        # zero-out logps on ignored positions
-        chosen_logps = chosen_logps * chosen_loss_mask
-        rejected_logps = rejected_logps * rejected_loss_mask
-
-        chosen_signs   = chosen_signs[:, 1:]   # drop the first token to match L-1
-        rejected_signs = rejected_signs[:, 1:]
-
-        # signs: replace -100 with 0 so they can be used for grouping
-        chosen_signs = chosen_signs.masked_fill(chosen_signs == -100, 0)
-        rejected_signs = rejected_signs.masked_fill(rejected_signs == -100, 0)
-
-        # phrase-level accumulation
-        pos_logps_acc = self.accumulate_logps(chosen_logps, chosen_signs)   # [batch, num_spans_i]
-        neg_logps_acc = self.accumulate_logps(rejected_logps, rejected_signs)
-
-        # softplus(neg - pos) over spans, averaged
-        alignment_loss = torch.log(1 + torch.exp(neg_logps_acc - pos_logps_acc))
-        alignment_loss = alignment_loss.mean()
-
-        # -------------------- divergence loss --------------------
-
-        # forward pass with current policy
-        #policy_logps, policy_labels, policy_logits = self.reference_forward(self.model, batch)
-        (
-            policy_logps,
-            _,
-            policy_labels,
-            _,
-            policy_logits,
-            _,
-            _,
-            _,
-        ) = self.forward_batch(model, batch)
-
-        # forward pass with frozen reference model
+        # -------- reference forward (chosen only) --------
         with torch.no_grad():
-            #ref_logps, ref_labels, ref_logits = self.reference_forward(self.ref_model, batch)
             if self.ref_model is None:
                 with self.accelerator.unwrap_model(self.model).disable_adapter():
-                    (
-                        ref_logps,
-                        _,
-                        ref_labels,
-                        _,
-                        ref_logits,
-                        _,
-                        _,
-                        _,
-                    ) = self.forward_batch(self.model, batch)
+                    ref_chosen_logps, ref_chosen_logits, ref_chosen_labels = self.forward_batch(
+                        self.model,
+                        batch["chosen_input_ids"],
+                        batch["chosen_labels"],
+                        batch["chosen_attention_mask"],
+                        batch["chosen_signs"],
+                        batch["image"],
+                    )
             else:
-                (
-                    ref_logps,
-                    _,
-                    ref_labels,
-                    _,
-                    ref_logits,
-                    _,
-                    _,
-                    _,
-                ) = self.forward_batch(self.ref_model, batch)
+                ref_chosen_logps, ref_chosen_logits, ref_chosen_labels = self.forward_batch(
+                    self.ref_model,
+                    batch["chosen_input_ids"],
+                    batch["chosen_labels"],
+                    batch["chosen_attention_mask"],
+                    batch["chosen_signs"],
+                    batch["image"],
+                )
 
-        ref_loss_mask = (ref_labels != -100)
-        vocab_size = ref_logits.shape[-1]
+        # -------- divergence loss (KL between ref and policy) --------
+        ref_probs = ref_chosen_logits.softmax(dim=-1)
+        policy_probs = chosen_logits.softmax(dim=-1)
+        mask = ref_chosen_labels != self.label_pad_token_id
 
-        ref_probs = torch.nn.functional.softmax(ref_logits, dim=-1)
-        policy_probs = torch.nn.functional.softmax(policy_logits, dim=-1)
+        divergence = (ref_probs * (ref_probs.log() - policy_probs.log()))
+        divergence = divergence * mask.unsqueeze(-1)
+        divergence = divergence.sum() / ref_probs.size(0)
 
-        divergence_loss = ref_probs * (ref_probs.log() - policy_probs.log())
-        divergence_loss = divergence_loss * ref_loss_mask.unsqueeze(-1)
-        divergence_loss = divergence_loss.sum() / divergence_loss.shape[0]   # normalize by batch size
+        # -------- final loss --------
+        loss = alignment_loss + 0.4*divergence
 
-        # -------------------- final loss --------------------
-        alpha = 0.4   # weight for divergence loss
-        loss = alignment_loss + alpha*divergence_loss
-        
-        # log the metrics
+        # -------- metrics --------
         prefix = "eval_" if train_eval == "eval" else ""
         metrics[f"{prefix}alignment_loss"] = alignment_loss.detach().cpu().mean()
-        metrics[f"{prefix}divergence_loss"] = divergence_loss.detach().cpu().mean()
+        metrics[f"{prefix}divergence_loss"] = divergence.detach().cpu().mean()
         metrics[f"{prefix}logps/chosen"] = chosen_logps.detach().cpu().mean()
         metrics[f"{prefix}logps/rejected"] = rejected_logps.detach().cpu().mean()
         metrics[f"{prefix}logits/chosen"] = chosen_logits.detach().cpu().mean()
