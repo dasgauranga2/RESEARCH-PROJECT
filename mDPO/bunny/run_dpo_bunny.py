@@ -12,7 +12,8 @@ from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import GPTQConfig, deepspeed
 from transformers.trainer_pt_utils import LabelSmoother
 
-from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
+#from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
+from modeling_bunny_llama import mDPOBunnyLlamaForCausalLM
 from data_collator_bunny_phi import mDPODataCollatorBunny, mDPOCNIDataCollatorBunny, mDPOSDDataCollatorBunny, DPADataCollatorBunny, CHiPDataCollatorBunny
 from dpo_trainer import mDPOTrainer, mDPOCNITrainer, mDPOSDTrainer, DPATrainer, CHiPTrainer
 
@@ -212,7 +213,17 @@ def train(config_dict):
     config.embd_pdrop = 0
 
     # load the bunny model
-    model = mDPOBunnyPhiForCausalLM.from_pretrained(
+    # model = mDPOBunnyPhiForCausalLM.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     config=config,
+    #     cache_dir=training_args.cache_dir,
+    #     device_map='auto',
+    #     trust_remote_code=True,
+    #     quantization_config=GPTQConfig(bits=4, disable_exllama=True)
+    #     if training_args.use_lora and lora_args.q_lora
+    #     else None,
+    # )
+    model = mDPOBunnyLlamaForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
@@ -222,6 +233,9 @@ def train(config_dict):
         if training_args.use_lora and lora_args.q_lora
         else None,
     )
+    for name, param in model.named_parameters():
+        param.requires_grad = True
+
     # if LoRA is not enabled fix the vision transformer
     if not training_args.use_lora:
         if (
@@ -291,13 +305,13 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = DPATrainer(
+    trainer = mDPOTrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=DPADataCollatorBunny(
+        data_collator=mDPODataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,
