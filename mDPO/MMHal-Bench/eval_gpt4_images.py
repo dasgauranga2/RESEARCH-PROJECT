@@ -8,7 +8,7 @@ import mimetypes
 
 # RUN THIS SCRIPT USING THE FOLLOWING COMMAND -
 '''
-CUDA_VISIBLE_DEVICES=1 python MMHal-Bench/eval_gpt4_images.py --response ./MMHal-Bench/responses/mdpo_bunny_results.json --evaluation ./MMHal-Bench/gpt_evaluation/mdpo_eval_gpt4.json --gpt-model gpt-4.1-2025-04-14
+CUDA_VISIBLE_DEVICES=1 python MMHal-Bench/eval_gpt4_images.py --response ./MMHal-Bench/responses/mdpo_bunny_results.json --evaluation ./MMHal-Bench/gpt_evaluation/mdpo_eval_gpt4_images.json --gpt-model gpt-4.1-2025-04-14
 '''
 
 with open("./MMHal-Bench/api.txt", "r") as f:
@@ -64,6 +64,10 @@ To evaluate the LMM responses, first, begin your evaluation by providing a short
 {}
 '''
 
+# failure analysis compare text only eval and image eval and text+image eval
+# prove problem with text only eval
+# find when text only eval gives low scores to correct answers (ground truth captioning)
+
 # function to get the image path from url
 def load_image_path(image_src):
     # extract the image name
@@ -105,8 +109,9 @@ if __name__ == '__main__':
     responses = []
     for i, record in enumerate(records):
         #image_content = ', '.join(record['image_content'])
-        image_path = load_image_path(record['image_src'])
-        image_url = image_to_data_url(image_path)
+        # image_path = load_image_path(record['image_src'])
+        # image_url = image_to_data_url(image_path)
+        image_url = record['image_src']
         input_text = template.format(record['question'], record['model_answer'])
         # print(input_text)
 

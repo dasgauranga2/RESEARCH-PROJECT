@@ -29,17 +29,25 @@ def load_image(image_src):
     
     return image
 
-# build the model using your own code
-model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
+# which model to use
+model_name = 'mdpo_bunny_8b'
+# path of saved checkpoint
+checkpoint_path = f'./checkpoint/{model_name}'
+
+# load the base model
+if '8b' in checkpoint_path:
+    model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-Llama-3-8B-V',
     torch_dtype=torch.float16, # float32 for cpu
     device_map='auto',
     trust_remote_code=True)
+else:
+    model = AutoModelForCausalLM.from_pretrained(
+        'BAAI/Bunny-v1_0-3B',
+        torch_dtype=torch.float16, # float32 for cpu
+        device_map='auto',
+        trust_remote_code=True)
 
-# which model to use
-model_name = 'mdpo_bunny'
-# path of saved checkpoint
-checkpoint_path = f'./checkpoint/{model_name}'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
