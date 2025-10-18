@@ -14,15 +14,23 @@ transformers.logging.disable_progress_bar()
 device = 'cuda'
 torch.set_default_device(device)
 
+# path of saved checkpoint
+checkpoint_path = './checkpoint/mdpo_bunny_8b'
+
 # load the base model
-model = AutoModelForCausalLM.from_pretrained(
-    'BAAI/Bunny-v1_0-3B',
+if '8b' in checkpoint_path:
+    model = AutoModelForCausalLM.from_pretrained(
+    'BAAI/Bunny-Llama-3-8B-V',
     torch_dtype=torch.float16, # float32 for cpu
     device_map='auto',
     trust_remote_code=True)
+else:
+    model = AutoModelForCausalLM.from_pretrained(
+        'BAAI/Bunny-v1_0-3B',
+        torch_dtype=torch.float16, # float32 for cpu
+        device_map='auto',
+        trust_remote_code=True)
 
-# path of saved checkpoint
-checkpoint_path = './checkpoint/mdpo_bunny'
 # determine if LoRA adapter weights should be used
 use_lora = True
 
