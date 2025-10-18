@@ -22,15 +22,19 @@ warmup_ratio: 0.1
 lr_scheduler_type: "cosine"
 logging_steps: 10  # interval at which metrics will be displayed 
 report_to: wandb
-model_max_length: 2048
+# model_max_length: 2048
+model_max_length: 1280
 gradient_checkpointing: true
 use_lora: true
 bf16: true
 tf32: true
 logging_first_step: true
 remove_unused_columns: false
-lora_r: 64  
-lora_alpha: 128 
+# lora_r: 64  
+# lora_alpha: 128 
+lora_r: 8  
+lora_alpha: 16 
+#lora_target_modules: all-linear 
 lora_target_modules: all-linear 
 dataset_path: ./data/vlfeedback_llava_10k.json # preference dataset path
 run_name: mdpo_bunny_8b
