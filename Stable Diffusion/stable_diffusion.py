@@ -79,25 +79,13 @@ def hallucinate(client, response_text):
     #     "Rewrite the response text by replacing every object with another similar but different object, while keeping the sentence structure and overall tone similar.\n\n"
     #     f"Response Text: {response_text}"
     # )
-    # prompt = (
-    #     "Rewrite the response text using the following instructions.\n"
-    #     "1. Replace every object and its attribute with another similar but different object.\n"
-    #     "2. If there is a number replace it with another similar number.\n"
-    #     "3. Keep the original response text structure same by simply changing some words and phrases.\n"
-    #     f"Response Text: {response_text}"
-    # )
     prompt = (
-    "Rewrite the given response text to create a hallucinated version of the scene.\n"
-        "Follow these exact rules:\n"
-        "1. Only replace concrete physical OBJECTS (nouns referring to visible things like 'dog', 'car', 'tree', 'chair', 'table', etc.) "
-        "with other visually similar but different objects (e.g., 'dog' → 'cat', 'car' → 'bus').\n"
-        "2. Do NOT change background or environmental details such as weather, time of day, lighting, visibility, or setting. "
-        "Leave words like 'rainy', 'sunny', 'visible', 'foggy', 'indoor', 'outdoor', etc. untouched.\n"
-        "3. Do NOT change verbs, adjectives describing states ('stuck', 'visible', 'broken'), or relational words.\n"
-        "4. Preserve all sentence structure, style, and phrasing. Only the object nouns (and directly attached colors or counts) should change.\n"
-        "5. Replace every number with a similar but different one (e.g., 3 → 4, 10 → 9).\n"
-        "6. Do NOT introduce new objects or remove existing ones. Just swap each object with a plausible alternative.\n"
-        "7. Do NOT add explanations, reasoning, or extra sentences.\n\n"
+        "Rewrite the response text following these rules:\n"
+        "1. Replace only the main foreground **objects** and their attributes (like color, size, or type) with different but visually similar objects.\n"
+        "2. Do **not** change the background elements such as location, environment, time of day, weather, lighting, or scene composition.\n"
+        "3. Keep the same sentence structure and phrasing as much as possible.\n"
+        "4. Do not add new sentences or change the length significantly.\n"
+        "5. The rewritten text should still describe a realistic visual scene.\n\n"
         f"Response Text: {response_text}"
     )
 
@@ -146,7 +134,8 @@ with open('./mDPO/data/vlfeedback_llava_10k.json', 'r') as file:
     data = json.load(file)
 
 # # indexes of data point
-# idxs = [0, 50, 100, 200, 500, 1000]
+# #idxs = [0, 50, 100, 200, 500, 1000, 2000, 5000]
+# idxs = [5, 55, 105, 205, 505, 1005, 2005, 5005]
 # for i in idxs:
 #     chosen_response = data[i]['chosen']
 #     summarized_chosen_response = summarize(openai_client, chosen_response)
@@ -164,16 +153,17 @@ rejected = []
 hallucinated = []
 # list of image names
 image_names = []
-# # list of image paths
-# image_paths = []
-# # list of images
-# images = []
+# list of image paths
+image_paths = []
+# list of images
+images = []
 # list to save the responses
 responses_data = []
 
+
 # # RANDOMLY SAMPLE SOME IMAGES FROM THE DATASET
 # # iterate through the data
-# for sample in random.sample(data, 4):
+# for sample in random.sample(data, 6):
 #     # summarize the chosen response
 #     chosen_response_summarized = summarize(openai_client, sample['chosen'])
 #     # generate the hallucinated response
@@ -187,7 +177,7 @@ responses_data = []
 #     image_names.append(sample['img_path'])
 
 # # figure for the original image and the custom images
-# fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 12))
+# fig, axes = plt.subplots(len(chosen), 3, figsize=(10, 18))
 # axes = axes.flatten()
 
 # start = time.time()
@@ -199,7 +189,7 @@ responses_data = []
 #         chosen[i], # text prompt for generation
 #         height=640,
 #         width=640,
-#         num_inference_steps=50, # no. of denoising steps for finer details
+#         num_inference_steps=40, # no. of denoising steps for finer details
 #         guidance_scale=10.0, # strength of prompt adherence 
 #     ).images[0]
 
@@ -208,7 +198,7 @@ responses_data = []
 #         hallucinated[i], # text prompt for generation
 #         height=640,
 #         width=640,
-#         num_inference_steps=50, # no. of denoising steps for finer details
+#         num_inference_steps=40, # no. of denoising steps for finer details
 #         guidance_scale=10.0, # strength of prompt adherence 
 #     ).images[0]
 
