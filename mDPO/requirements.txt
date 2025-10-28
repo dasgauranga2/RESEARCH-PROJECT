@@ -26,3 +26,4 @@ transformers_stream_generator
 wandb==0.19.9
 scipy==1.15.3
 scikit-learn==1.6.1
+# pip install bitsandbytes==0.43.0 --extra-index-url https://jllllll.github.io/bitsandbytes-wheels/cu117
