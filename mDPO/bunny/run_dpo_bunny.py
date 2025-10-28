@@ -10,6 +10,7 @@ import transformers
 from accelerate.utils import DistributedType
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import GPTQConfig, deepspeed
+from transformers import BitsAndBytesConfig
 from transformers.trainer_pt_utils import LabelSmoother
 
 #from modeling_bunny_phi import mDPOBunnyPhiForCausalLM
@@ -219,22 +220,25 @@ def train(config_dict):
     #     cache_dir=training_args.cache_dir,
     #     device_map='auto',
     #     trust_remote_code=True,
-    #     quantization_config=GPTQConfig(bits=4, disable_exllama=True)
-    #     if training_args.use_lora and lora_args.q_lora
-    #     else None,
+    #     quantization_config=None
     # )
+    # quantization configuration for 4-bit quantization
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",          # adaptive quantization
+        bnb_4bit_use_double_quant=True,     # second-level scaling
+        bnb_4bit_compute_dtype=torch.bfloat16
+    )
     model = mDPOBunnyLlamaForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
         device_map='auto',
         trust_remote_code=True,
-        quantization_config=GPTQConfig(bits=4, disable_exllama=True)
-        if training_args.use_lora and lora_args.q_lora
-        else None,
+        quantization_config=bnb_config
     )
-    for name, param in model.named_parameters():
-        param.requires_grad = True
+    # for name, param in model.named_parameters():
+    #     param.requires_grad = True
 
     # if LoRA is not enabled fix the vision transformer
     if not training_args.use_lora:
@@ -261,6 +265,13 @@ def train(config_dict):
 
     # check if LoRA is enabled 
     if training_args.use_lora:
+        # check if q-LoRA is enabled
+        if lora_args.q_lora:
+            # prepare the model for k-bit training
+            model = prepare_model_for_kbit_training(
+                model, use_gradient_checkpointing=training_args.gradient_checkpointing
+            )
+
         # find the target modules to which LoRA will be applied
         if lora_args.lora_target_modules == "all-linear":
             lora_target_modules = find_all_linear_names(model)
@@ -279,12 +290,11 @@ def train(config_dict):
             task_type="CAUSAL_LM",
             # modules_to_save=None,  # This argument serves for adding new tokens.
         )
-        # check if q-LoRA is enabled
+
         if lora_args.q_lora:
-            # prepare the model for k-bit training
-            model = prepare_model_for_kbit_training(
-                model, use_gradient_checkpointing=training_args.gradient_checkpointing
-            )
+            from peft import get_peft_model
+            model = get_peft_model(model, lora_config)
+        
         # check if gradient checkpointing is enabled
         if training_args.gradient_checkpointing:
             # set the requires_grad attribute of input embeddings to True
@@ -305,13 +315,13 @@ def train(config_dict):
     print_trainable_parameters(model)
     
     # custom trainer to train the model using mDPO
-    trainer = mDPOTrainer(
+    trainer = mDPOSDTrainer(
         model, # model to be trained
         args=training_args,
         beta=training_args.beta,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=mDPODataCollatorBunny(
+        data_collator=mDPOSDDataCollatorBunny(
             tokenizer,
             model,
             max_length=training_args.model_max_length,
